@@ -1,0 +1,21 @@
+pipeline:
+  confidence_threshold: 0.75
+  missing_value_marker: "not_found"
+  max_candidates_per_field: 20
+
+azure_content_understanding:
+  enabled: false
+  mode: fallback_only
+  endpoint: ""
+  api_key: ""
+  model: ""
+
+extractor_priors:
+  excel_native: 0.95
+  pdf_native: 0.85
+  azure_cu: 0.80
+
+field_aliases:
+  invoice_number: ["invoice number", "invoice #", "inv no", "invoice no"]
+  invoice_date: ["invoice date", "date"]
+  total_amount: ["total", "amount due", "invoice total", "grand total"]

@@ -1,0 +1,36 @@
+{
+    "schema_name": "baseline_output",
+    "fields": [
+        {
+            "name": "invoice_number",
+            "type": "string",
+            "required": false,
+            "aliases": [
+                "invoice number",
+                "invoice #",
+                "inv no",
+                "invoice no"
+            ]
+        },
+        {
+            "name": "invoice_date",
+            "type": "string",
+            "required": false,
+            "aliases": [
+                "invoice date",
+                "date"
+            ]
+        },
+        {
+            "name": "total_amount",
+            "type": "number",
+            "required": false,
+            "aliases": [
+                "total",
+                "amount due",
+                "invoice total",
+                "grand total"
+            ]
+        }
+    ]
+}
