@@ -8,6 +8,9 @@ from ..models import ExtractionCandidate, OutputSchema
 from .base import BaseExtractor
 
 
+_SEEN_KEY_LIMIT = 200
+
+
 class PdfNativeExtractor(BaseExtractor):
     name = "pdf_native"
 
@@ -47,3 +50,22 @@ class PdfNativeExtractor(BaseExtractor):
                     )
 
         return candidates
+
+    def collect_raw_keys(self, file_path: Path) -> list[str]:
+        """Return all unique colon-delimited left-hand labels seen in the file."""
+        seen: set[str] = set()
+        try:
+            reader = PdfReader(str(file_path))
+        except (OSError, ValueError):
+            return []
+        for page in reader.pages:
+            text = page.extract_text() or ""
+            for line in text.splitlines():
+                if ":" not in line:
+                    continue
+                key = line.split(":", 1)[0].strip().lower()
+                if key:
+                    seen.add(key)
+                if len(seen) >= _SEEN_KEY_LIMIT:
+                    return list(seen)
+        return list(seen)

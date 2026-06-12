@@ -8,6 +8,9 @@ from ..models import ExtractionCandidate, OutputSchema
 from .base import BaseExtractor
 
 
+_SEEN_KEY_LIMIT = 200  # cap how many unmatched keys we record per file
+
+
 class ExcelNativeExtractor(BaseExtractor):
     name = "excel_native"
 
@@ -48,3 +51,24 @@ class ExcelNativeExtractor(BaseExtractor):
                         )
 
         return candidates
+
+    def collect_raw_keys(self, file_path: Path) -> list[str]:
+        """Return all unique non-empty cell-label keys seen in the file."""
+        seen: set[str] = set()
+        try:
+            sheets = pd.read_excel(file_path, sheet_name=None, header=None)
+        except (OSError, ValueError):
+            return []
+        for df in sheets.values():
+            for row_idx in range(len(df)):
+                for col_idx in range(max(0, len(df.columns) - 1)):
+                    left = df.iat[row_idx, col_idx]
+                    right = df.iat[row_idx, col_idx + 1]
+                    if pd.isna(left) or pd.isna(right):
+                        continue
+                    key = str(left).strip().lower()
+                    if key:
+                        seen.add(key)
+                    if len(seen) >= _SEEN_KEY_LIMIT:
+                        return list(seen)
+        return list(seen)
