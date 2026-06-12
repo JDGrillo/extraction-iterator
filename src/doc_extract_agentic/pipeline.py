@@ -57,6 +57,7 @@ def run_pipeline(
             file_name=file_path.name,
             extractor_plan=plan,
             results=final_results,
+            candidates=candidates,  # Pass candidates for feedback loop analysis
         )
 
         all_field_results.append(final_results)

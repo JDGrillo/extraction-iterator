@@ -16,8 +16,20 @@ dependencies = [
   "typer>=0.12.0",
 ]
 
+[project.optional-dependencies]
+azure = [
+  "azure-ai-documentintelligence>=1.0.0",
+  "azure-core>=1.30.0",
+]
+
 [project.scripts]
 doc-extract-run = "doc_extract_agentic.cli:app"
+setup-cu-analyzer = "doc_extract_agentic.scripts.setup_cu_analyzer:app"
+test-cu-config = "doc_extract_agentic.scripts.test_cu_config:app"
+setup-env = "doc_extract_agentic.scripts.setup_env:app"
+analyze-cu = "doc_extract_agentic.scripts.analyze_cu_performance:app"
+improve-cu = "doc_extract_agentic.scripts.improve_cu_analyzer:app"
+analyze-data = "doc_extract_agentic.scripts.analyze_data:app"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
