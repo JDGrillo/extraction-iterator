@@ -7,15 +7,17 @@ This script shows you:
 3. Which extraction strategies work best
 4. What needs improvement and how
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
 import typer
 
-from .config import load_config
-from .data_discovery import DataDiscoverer
-from .extractor_performance_analyzer import ExtractorPerformanceAnalyzer
+from ..config import load_config
+from ..data_discovery import DataDiscoverer
+from ..extractor_performance_analyzer import ExtractorPerformanceAnalyzer
+from ..llm_improvement import LLMImprovementSuggester
 
 app = typer.Typer(help="Analyze extraction performance using data-first approach")
 
@@ -45,28 +47,29 @@ def analyze_data(
 ):
     """
     Analyze your input data to discover what extractors should find.
-    
+
     This shows:
     - What fields/values exist in your documents
     - Which extractors find them
     - Success rates and patterns
     - How to improve extraction
-    
+
     Usage:
         # Discover what's in your input files
         analyze-data --input-dir ./invoices
-        
+
         # Also analyze extractor performance
         analyze-data --input-dir ./invoices --run-dir ./runs/v1
     """
     input_path = Path(input_dir)
     output_path = Path(output_dir)
-    
+
     if run_dir:
         run_path = Path(run_dir)
     else:
         run_path = None
 
+    cfg = load_config(Path(config))
     output_path.mkdir(parents=True, exist_ok=True)
 
     print("\n" + "=" * 70)
@@ -111,18 +114,20 @@ def analyze_data(
         print(f"Analyzing extraction run in {run_path}...")
 
         perf_analyzer = ExtractorPerformanceAnalyzer(run_path)
-        perf_analyzer.write_performance_report(output_path, discovery_result)
+        llm_suggester = LLMImprovementSuggester.from_config(cfg)
+        perf_analyzer.write_performance_report(
+            output_path,
+            discovery_result,
+            llm_suggester=llm_suggester,
+        )
 
         # Print improvement suggestions
         events = perf_analyzer.load_learning_events()
         performance = perf_analyzer.analyze_all_extractors(events)
         strategies = perf_analyzer.identify_best_strategies(performance)
-        suggestions = perf_analyzer.generate_improvement_suggestions(strategies)
 
         low_performing_fields = [
-            f
-            for f, s in strategies.items()
-            if s.get("improvement_needed", False)
+            f for f, s in strategies.items() if s.get("improvement_needed", False)
         ]
 
         if low_performing_fields:
@@ -138,6 +143,7 @@ def analyze_data(
         print(f"  • {output_path / 'extractor_performance.json'}")
         print(f"  • {output_path / 'field_extraction_strategy.json'}")
         print(f"  • {output_path / 'improvement_suggestions.json'}")
+        print(f"  • {output_path / 'llm_improvement_suggestions.json'}")
 
     else:
         print("\n💡 Tip: To analyze extractor performance, run your extraction first:")

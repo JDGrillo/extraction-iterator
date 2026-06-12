@@ -15,6 +15,19 @@ azure_content_understanding:
   api_key: ""   # Get from Azure Portal
   model: "prebuilt-document"  # Model to use for extraction
 
+llm_improvement:
+  enabled: false
+  provider: openai_compatible
+  # Optional and disabled by default.
+  # If enabled, suggestions are merged with deterministic suggestions.
+  # You can use environment variables instead of hardcoding secrets:
+  # LLM_IMPROVEMENT_ENDPOINT, LLM_IMPROVEMENT_API_KEY
+  endpoint: ""  # e.g., https://api.openai.com/v1
+  api_key: ""
+  model: "gpt-4o-mini"
+  timeout_seconds: 30
+  max_fields: 20
+
 extractor_priors:
   excel_native: 0.95
   pdf_native: 0.85

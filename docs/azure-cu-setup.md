@@ -69,9 +69,9 @@ This generates:
 Example output:
 ```
 Extract the following fields from the document:
-- invoice_number: invoice number, invoice #, inv no, invoice no (optional)
-- invoice_date: invoice date, date (optional)
-- total_amount: total, amount due, invoice total, grand total (optional)
+- document_id: document id, reference number, id (optional)
+- document_date: date, issued date, created date (optional)
+- total_value: total, amount, final value (optional)
 ```
 
 ### Step 4: Validate Configuration
@@ -118,12 +118,12 @@ CU extracts key-value pairs and tables, then maps them to your schema using **fi
 For example, if your schema has:
 ```json
 {
-  "name": "invoice_number",
-  "aliases": ["invoice number", "invoice #", "inv no"]
+  "name": "document_id",
+  "aliases": ["document id", "reference number", "id"]
 }
 ```
 
-CU will look for any of those aliases in the extracted key text and map matches to `invoice_number`.
+CU will look for any of those aliases in the extracted key text and map matches to `document_id`.
 
 ## Cost Estimation
 
@@ -170,8 +170,8 @@ To customize how CU maps fields:
 1. After setup, run a test extraction:
    ```bash
    doc-extract-run \
-     --input-dir ./sample_inputs \
-     --output-dir ./runs/test_cu \
+     --input-dir ./input_data/batch_001 \
+     --output-dir ./output_data/run_cu_001 \
      --schema ./schemas/output_schema.example.json \
      --config ./configs/default.yaml
    ```

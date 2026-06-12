@@ -7,6 +7,7 @@ Scans all input documents to understand:
 - Data types and formats
 - Which extractors find what
 """
+
 from __future__ import annotations
 
 import json
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 class DataDiscoverer:
     """
     Analyzes input documents to discover data patterns.
-    
+
     Outputs:
     - data_profile.json: What fields/values exist in documents
     - field_patterns.json: How each field appears across documents
@@ -44,7 +45,9 @@ class DataDiscoverer:
         )
         pdf_files = list(self.input_dir.glob("**/*.pdf"))
 
-        logger.info(f"Discovering data in {len(excel_files)} Excel + {len(pdf_files)} PDF files")
+        logger.info(
+            f"Discovering data in {len(excel_files)} Excel + {len(pdf_files)} PDF files"
+        )
 
         # Scan Excel files
         for excel_file in excel_files:
@@ -69,7 +72,9 @@ class DataDiscoverer:
                 "excel_findings_count": len(
                     self.extractor_findings.get("excel_native", [])
                 ),
-                "pdf_findings_count": len(self.extractor_findings.get("pdf_native", [])),
+                "pdf_findings_count": len(
+                    self.extractor_findings.get("pdf_native", [])
+                ),
             },
         }
 
@@ -141,12 +146,7 @@ class DataDiscoverer:
                         if len(parts) == 2:
                             key = parts[0].strip().lower()
                             value = parts[1].strip()
-                            if (
-                                key
-                                and value
-                                and len(key) < 100
-                                and len(value) < 500
-                            ):
+                            if key and value and len(key) < 100 and len(value) < 500:
                                 self.discovered_fields[key].append(value)
                                 self.extractor_findings["pdf_native"].append(
                                     f"{key}:{value}"
@@ -167,9 +167,7 @@ class DataDiscoverer:
                 "unique_count": len(set(values)),
                 "examples": list(set(values))[:3],
                 "value_types": self._infer_types(values),
-                "frequency": Counter(values).most_common(1)[0]
-                if values
-                else None,
+                "frequency": Counter(values).most_common(1)[0] if values else None,
             }
 
             self.field_patterns[field_name] = patterns
@@ -201,9 +199,7 @@ class DataDiscoverer:
             json.dump(discovery_result["field_patterns"], f, indent=2)
 
         # Write extractor findings
-        with (output_dir / "extractor_findings.json").open(
-            "w", encoding="utf-8"
-        ) as f:
+        with (output_dir / "extractor_findings.json").open("w", encoding="utf-8") as f:
             json.dump(discovery_result["extractor_findings"], f, indent=2)
 
         logger.info(f"Discovery report written to {output_dir}")

@@ -1,5 +1,25 @@
 # Customization Guide
 
+## 0) Drop-In Usage Pattern
+
+This starter is designed for folder-based processing:
+
+1. Place source files in any input folder (single file or nested folders)
+2. Point `--input-dir` to that folder
+3. Point `--output-dir` to a new run folder
+4. Rerun with updated config/schema using a new output folder
+
+Example:
+
+```bash
+doc-extract-run --input-dir ./input_data/batch_001 --output-dir ./output_data/run_001 --schema ./schemas/output_schema.example.json --config ./configs/default.yaml
+analyze-data --input-dir ./input_data/batch_001 --run-dir ./output_data/run_001
+
+# Iterate
+doc-extract-run --input-dir ./input_data/batch_001 --output-dir ./output_data/run_002 --schema ./schemas/output_schema.example.json --config ./configs/default.yaml
+analyze-data --input-dir ./input_data/batch_001 --run-dir ./output_data/run_002
+```
+
 ## 1) Define Your Output Schema
 
 Edit `schemas/output_schema.example.json`:
@@ -32,16 +52,16 @@ The system automatically analyzes where extractors succeed/fail and suggests imp
 
 ```bash
 # After extraction, analyze performance
-analyze-cu --run-dir ./runs/run_001 --schema ./schemas/output_schema.example.json --config ./configs/default.yaml
+analyze-cu --run-dir ./output_data/run_001 --schema ./schemas/output_schema.example.json --config ./configs/default.yaml
 
 # Apply improvements and rerun
-improve-cu --previous-run ./runs/run_001 --input-dir ./sample_inputs --schema ./schemas/output_schema.example.json --config ./configs/default.yaml --new-run ./runs/run_002
+improve-cu --previous-run ./output_data/run_001 --input-dir ./input_data/batch_001 --schema ./schemas/output_schema.example.json --config ./configs/default.yaml --new-run ./output_data/run_002
 
 # Compare results to measure improvement
-analyze-cu --run-dir ./runs/run_002 --schema ./schemas/output_schema.example.json --config ./configs/default.yaml
+analyze-cu --run-dir ./output_data/run_002 --schema ./schemas/output_schema.example.json --config ./configs/default.yaml
 ```
 
-See [docs/cu-feedback-loop.md](cu-feedback-loop.md) and [docs/workflow-example.md](workflow-example.md) for detailed patterns.
+See [docs/data-first-extraction.md](data-first-extraction.md) for generic iteration patterns.
 
 ## 5) Improve Extractors
 
@@ -54,7 +74,7 @@ Add domain logic for:
 - section-specific parsing
 - regex/normalization rules for dates/currency/IDs
 
-Example: detecting invoice sections in PDFs
+Example: detecting section-specific patterns in PDFs
 ```python
 def extract(self, file_path, schema, config):
     candidates = []
@@ -62,14 +82,14 @@ def extract(self, file_path, schema, config):
     
     for page in reader.pages:
         text = page.extract_text()
-        # Look for "INVOICE" header
-        if "INVOICE" in text.upper():
-            # Parse invoice-specific fields
+        # Look for a domain-specific section header
+        if "SECTION_HEADER" in text.upper():
+            # Parse section-specific fields
             ...
     return candidates
 ```
 
-## 5) Customize Azure Content Understanding Extraction
+## 6) Customize Azure Content Understanding Extraction
 
 Edit `src/doc_extract_agentic/cu_client.py` to:
 - Add custom field matching logic (regex, fuzzy matching, semantic similarity)
@@ -87,13 +107,13 @@ def analyze_document(self, file_path, schema, field_aliases):
         value_text = kv.value.content
         
         # Higher confidence for exact matches
-        if key_text in field_aliases["invoice_number"]:
+        if key_text in field_aliases["document_id"]:
             confidence = 0.95
         else:
             confidence = 0.70
             
         candidates.append(ExtractionCandidate(
-            field_name="invoice_number",
+            field_name="document_id",
             value=value_text,
             confidence=confidence,
             extractor="azure_cu",
@@ -103,7 +123,7 @@ def analyze_document(self, file_path, schema, field_aliases):
     return candidates
 ```
 
-## 6) Strengthen Reconciliation
+## 7) Strengthen Reconciliation
 
 Update `reconciler.py` to include:
 - per-field scoring weights
@@ -130,7 +150,7 @@ def reconcile_candidates(candidates, schema, config):
     return results
 ```
 
-## 7) Learning and Evaluation
+## 8) Learning and Evaluation
 
 Use generated artifacts:
 - `learning_events.jsonl` for policy learning
@@ -143,7 +163,7 @@ Example: analyze discrepancies
 grep '"actual"' runs/*/discrepancies.csv | sort | uniq -c | sort -rn
 ```
 
-## 8) Add More Extractors
+## 9) Add More Extractors
 
 Create a new extractor for specialized formats:
 
@@ -174,6 +194,6 @@ def build_registry():
     return {x.name: x for x in extractors}
 ```
 
-## 9) Deploy as Service (Next)
+## 10) Deploy as Service (Next)
 
 Wrap CLI in a lightweight API (FastAPI) for on-demand runs and integrate a job queue if volume grows.

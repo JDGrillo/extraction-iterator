@@ -7,15 +7,16 @@ Analyzes all extractors to understand:
 - Reliability and confidence patterns
 - Which extraction strategies are most effective
 """
+
 from __future__ import annotations
 
 import json
 import logging
 from pathlib import Path
 from typing import Any
-from collections import defaultdict, Counter
+from collections import defaultdict
 
-import pandas as pd
+from .llm_improvement import LLMImprovementSuggester
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +75,6 @@ class ExtractorPerformanceAnalyzer:
         )
 
         for event in events:
-            extractors_used = event.get("extractor_plan", [])
-
             for result in event.get("results", []):
                 field_name = result.get("field_name")
                 status = result.get("status")
@@ -126,9 +125,7 @@ class ExtractorPerformanceAnalyzer:
 
         return result
 
-    def identify_best_strategies(
-        self, performance: dict[str, Any]
-    ) -> dict[str, Any]:
+    def identify_best_strategies(self, performance: dict[str, Any]) -> dict[str, Any]:
         """
         For each field, identify which extractors work best.
 
@@ -179,7 +176,7 @@ class ExtractorPerformanceAnalyzer:
         return strategies
 
     def generate_improvement_suggestions(
-        self, strategies: dict[str, Any], discovery_patterns: dict | None = None
+        self, strategies: dict[str, Any], _discovery_patterns: dict | None = None
     ) -> dict[str, Any]:
         """
         Generate specific suggestions to improve extraction.
@@ -234,7 +231,7 @@ class ExtractorPerformanceAnalyzer:
                     )
                 else:
                     field_suggestions.append(
-                        f"  → May need to add custom extraction logic for this field"
+                        "  → May need to add custom extraction logic for this field"
                     )
 
             suggestions[field_name] = field_suggestions
@@ -242,7 +239,10 @@ class ExtractorPerformanceAnalyzer:
         return suggestions
 
     def write_performance_report(
-        self, output_dir: Path, discovery_patterns: dict | None = None
+        self,
+        output_dir: Path,
+        discovery_patterns: dict | None = None,
+        llm_suggester: LLMImprovementSuggester | None = None,
     ) -> None:
         """Write extractor performance analysis to files."""
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -259,10 +259,24 @@ class ExtractorPerformanceAnalyzer:
         strategies = self.identify_best_strategies(performance)
 
         # Generate suggestions
-        suggestions = self.generate_improvement_suggestions(strategies, discovery_patterns)
+        suggestions = self.generate_improvement_suggestions(
+            strategies, discovery_patterns
+        )
+
+        llm_suggestions: dict[str, list[str]] = {}
+        if llm_suggester is not None:
+            llm_suggestions = llm_suggester.generate_suggestions(
+                strategies=strategies,
+                deterministic_suggestions=suggestions,
+                discovery_patterns=discovery_patterns,
+            )
+
+        merged_suggestions = self._merge_suggestions(suggestions, llm_suggestions)
 
         # Write reports
-        with (output_dir / "extractor_performance.json").open("w", encoding="utf-8") as f:
+        with (output_dir / "extractor_performance.json").open(
+            "w", encoding="utf-8"
+        ) as f:
             json.dump(performance, f, indent=2)
 
         with (output_dir / "field_extraction_strategy.json").open(
@@ -273,23 +287,55 @@ class ExtractorPerformanceAnalyzer:
         with (output_dir / "improvement_suggestions.json").open(
             "w", encoding="utf-8"
         ) as f:
-            json.dump(suggestions, f, indent=2)
+            json.dump(merged_suggestions, f, indent=2)
 
-        logger.info(f"Performance report written to {output_dir}")
-        
+        with (output_dir / "llm_improvement_suggestions.json").open(
+            "w", encoding="utf-8"
+        ) as f:
+            json.dump(llm_suggestions, f, indent=2)
+
+        logger.info("Performance report written to %s", output_dir)
+
         # Print summary
         print("\n" + "=" * 70)
         print("EXTRACTOR PERFORMANCE SUMMARY")
         print("=" * 70)
-        
+
         for field_name, strategy in sorted(strategies.items()):
             rate = strategy["success_rate"]
-            status = "✓ GOOD" if rate >= 0.9 else "⚠ NEEDS IMPROVEMENT" if rate >= 0.7 else "✗ CRITICAL"
+            status = (
+                "✓ GOOD"
+                if rate >= 0.9
+                else "⚠ NEEDS IMPROVEMENT" if rate >= 0.7 else "✗ CRITICAL"
+            )
             print(f"\n{field_name}: {rate:.1%} {status}")
             print(f"  Best: {strategy['best_extractor']}")
-            if strategy['alternatives']:
+            if strategy["alternatives"]:
                 print(f"  Alternatives: {', '.join(strategy['alternatives'])}")
-            
-            if field_name in suggestions:
-                for suggestion in suggestions[field_name]:
+
+            if field_name in merged_suggestions:
+                for suggestion in merged_suggestions[field_name]:
                     print(f"  → {suggestion}")
+
+    def _merge_suggestions(
+        self,
+        deterministic: dict[str, list[str]],
+        llm_based: dict[str, list[str]],
+    ) -> dict[str, list[str]]:
+        """Combine deterministic and LLM suggestions without duplicates."""
+        merged: dict[str, list[str]] = {}
+        fields = set(deterministic.keys()) | set(llm_based.keys())
+
+        for field_name in fields:
+            combined = deterministic.get(field_name, []) + llm_based.get(field_name, [])
+            deduped: list[str] = []
+            seen: set[str] = set()
+            for item in combined:
+                key = item.strip().lower()
+                if key and key not in seen:
+                    seen.add(key)
+                    deduped.append(item)
+            if deduped:
+                merged[field_name] = deduped
+
+        return merged
