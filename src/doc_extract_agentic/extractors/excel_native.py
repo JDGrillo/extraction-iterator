@@ -7,7 +7,6 @@ import pandas as pd
 from ..models import ExtractionCandidate, OutputSchema
 from .base import BaseExtractor
 
-
 _SEEN_KEY_LIMIT = 200  # cap how many unmatched keys we record per file
 
 

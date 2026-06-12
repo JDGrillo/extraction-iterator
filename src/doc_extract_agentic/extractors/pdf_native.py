@@ -7,7 +7,6 @@ from pypdf import PdfReader
 from ..models import ExtractionCandidate, OutputSchema
 from .base import BaseExtractor
 
-
 _SEEN_KEY_LIMIT = 200
 
 

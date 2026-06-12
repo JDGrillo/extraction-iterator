@@ -56,11 +56,36 @@ doc-extract-run --input-dir ./input_data/batch_001 --output-dir ./output_data/ru
 analyze-data --input-dir ./input_data/batch_001 --run-dir ./output_data/run_002
 ```
 
+### Autonomous Iteration (Recommended)
+
+Let the system iterate automatically until success criteria are met:
+
+```bash
+doc-extract-auto-iterate \
+  --input-dir ./input_data/batch_001 \
+  --schema ./schemas/output_schema.example.json \
+  --output-dir ./output_data/auto_iterate \
+  --target-success-rate 0.90 \
+  --max-iterations 10
+```
+
+The system will:
+1. Run extraction (iter_01)
+2. Analyze performance and identify weak fields
+3. Propose missing aliases from document labels
+4. Apply approved aliases to schema
+5. Rerun extraction (iter_02)
+6. Compare results; repeat if improvement continues
+7. Stop when target is reached or plateau is detected
+
+Output: `iteration_report.json` with full history and summary.
+
 ## CLI Commands
 
 | Command | Purpose |
 |---------|---------|
 | `doc-extract-run` | Run extraction pipeline |
+| `doc-extract-auto-iterate` | Autonomous improvement loop: extract → analyze → improve → repeat until success |
 | `analyze-data` | Analyze data patterns and extractor performance |
 | `setup-cu-analyzer` | Generate Azure CU analyzer config |
 | `test-cu-config` | Validate Azure CU configuration |
@@ -78,6 +103,12 @@ Optional and disabled by default. Enable under `azure_content_understanding` in 
 Optional and disabled by default. Enable under `llm_improvement` in [configs/default.yaml](configs/default.yaml).
 
 If unavailable or misconfigured, the pipeline continues with deterministic behavior.
+
+When enabled, alias auto-correction is promotion-gated by default:
+
+- suggestions are tracked in `alias_promotion_state.json` across analysis runs
+- aliases are applied only after repeated confirmation (see `llm_improvement.alias_promotion`)
+- review `alias_promotion_report.json` before enabling `--auto-correct` in shared environments
 
 ## Output Artifacts
 

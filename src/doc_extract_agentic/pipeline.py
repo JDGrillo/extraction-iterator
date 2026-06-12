@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from uuid import uuid4
 
@@ -10,6 +11,8 @@ from .learner import append_learning_event
 from .models import ExtractionCandidate, OutputSchema
 from .planner import pick_extractors_for_file, should_invoke_cu_fallback
 from .reconciler import reconcile_candidates
+
+logger = logging.getLogger(__name__)
 
 
 def run_pipeline(
@@ -30,14 +33,20 @@ def run_pipeline(
     for file_path in files:
         plan = pick_extractors_for_file(file_path, config)
         candidates: list[ExtractionCandidate] = []
+        extraction_errors: list[str] = []
 
         for extractor_name in plan:
             extractor = registry.get(extractor_name)
             if extractor is None:
                 continue
-            candidates.extend(
-                extractor.extract(file_path=file_path, schema=schema, config=config)
-            )
+            try:
+                candidates.extend(
+                    extractor.extract(file_path=file_path, schema=schema, config=config)
+                )
+            except Exception as exc:
+                msg = f"{extractor_name} failed on {file_path.name}: {exc}"
+                logger.warning(msg)
+                extraction_errors.append(msg)
 
         provisional_results = reconcile_candidates(candidates, schema, config)
         low_conf = any(r.status != "found" for r in provisional_results)
@@ -46,9 +55,14 @@ def run_pipeline(
             cu = registry.get("azure_cu")
             if cu is not None:
                 plan.append("azure_cu")
-                candidates.extend(
-                    cu.extract(file_path=file_path, schema=schema, config=config)
-                )
+                try:
+                    candidates.extend(
+                        cu.extract(file_path=file_path, schema=schema, config=config)
+                    )
+                except Exception as exc:
+                    msg = f"azure_cu failed on {file_path.name}: {exc}"
+                    logger.warning(msg)
+                    extraction_errors.append(msg)
 
         final_results = reconcile_candidates(candidates, schema, config)
 
@@ -68,6 +82,7 @@ def run_pipeline(
                 "plan": plan,
                 "candidate_count": len(candidates),
                 "field_status": {r.field_name: r.status for r in final_results},
+                "extraction_errors": extraction_errors,
             }
         )
 

@@ -27,6 +27,18 @@ llm_improvement:
   model: "gpt-4o-mini"
   timeout_seconds: 30
   max_fields: 20
+  alias_promotion:
+    enabled: true
+    min_confirmed_runs: 2
+    min_docs_per_run: 2
+    min_doc_ratio: 0.15
+
+auto_iteration:
+  max_iterations: 5
+  target_success_rate: 0.85
+  min_improvement_delta: 0.05
+  target_confidence: 0.75
+  critical_field_threshold: 0.5
 
 extractor_priors:
   excel_native: 0.95

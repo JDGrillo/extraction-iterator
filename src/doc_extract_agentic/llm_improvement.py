@@ -73,7 +73,9 @@ class LLMImprovementSuggester:
                 {
                     "field_name": field_name,
                     "strategy": strategy,
-                    "deterministic_suggestions": deterministic_suggestions.get(field_name, []),
+                    "deterministic_suggestions": deterministic_suggestions.get(
+                        field_name, []
+                    ),
                     "pattern": (discovery_patterns or {})
                     .get("field_patterns", {})
                     .get(field_name, {}),
@@ -112,9 +114,7 @@ class LLMImprovementSuggester:
         """
         if not self.is_ready() or not not_found_fields:
             return {}
-        all_raw_keys = sorted(
-            {k for keys in raw_keys_by_file.values() for k in keys}
-        )
+        all_raw_keys = sorted({k for keys in raw_keys_by_file.values() for k in keys})
         if not all_raw_keys:
             return {}
         system_prompt = (
@@ -227,6 +227,12 @@ class LLMImprovementSuggester:
                     .get("content", "")
                     .strip()
                 )
-        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        except (
+            HTTPError,
+            URLError,
+            TimeoutError,
+            json.JSONDecodeError,
+            OSError,
+        ) as exc:
             logger.warning("LLM call failed; continuing deterministically: %s", exc)
             return ""

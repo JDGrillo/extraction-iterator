@@ -1,4 +1,5 @@
 """Data-first extraction analysis: discover patterns, measure performance, self-correct."""
+
 from __future__ import annotations
 
 import json as _json
@@ -6,6 +7,7 @@ from pathlib import Path
 
 import typer
 
+from ..alias_promotion import AliasPromotionConfig, AliasPromotionLedger
 from ..config import load_config
 from ..data_discovery import DataDiscoverer
 from ..extractor_performance_analyzer import ExtractorPerformanceAnalyzer
@@ -30,7 +32,7 @@ def analyze_data(
     auto_correct: bool = typer.Option(
         False,
         "--auto-correct",
-        help="Apply LLM alias suggestions directly back into the schema file.",
+        help="Apply only promotion-approved LLM aliases back into the schema file.",
     ),
 ) -> None:
     """
@@ -39,7 +41,8 @@ def analyze_data(
     Phase 1 (always): Discover patterns in input documents.
     Phase 2 (with --run-dir): Measure extractor success rates per field.
     Phase 3 (--run-dir + --schema + LLM enabled): Propose missing aliases from
-    actual document labels and optionally apply them back into the schema.
+    actual document labels and optionally apply promotion-approved aliases
+    back into the schema.
     """
     input_path = Path(input_dir)
     output_path = Path(output_dir)
@@ -72,10 +75,14 @@ def analyze_data(
         print("\n  Top fields found in documents:")
         for field_name, pattern in sorted_fields[:10]:
             example = (pattern.get("examples") or [""])[0]
-            print(f"    {field_name}: {pattern['count']} occurrences  (e.g. '{example}')")
+            print(
+                f"    {field_name}: {pattern['count']} occurrences  (e.g. '{example}')"
+            )
 
     if not (run_path and run_path.exists()):
-        print("\n  Tip: add --run-dir <run_folder> after an extraction run for performance analysis.")
+        print(
+            "\n  Tip: add --run-dir <run_folder> after an extraction run for performance analysis."
+        )
         print(sep + "\n")
         return
 
@@ -90,18 +97,24 @@ def analyze_data(
     events = perf_analyzer.load_learning_events()
     performance = perf_analyzer.analyze_all_extractors(events)
     strategies = perf_analyzer.identify_best_strategies(performance)
-    low_fields = [f for f, s in strategies.items() if s.get("improvement_needed", False)]
+    low_fields = [
+        f for f, s in strategies.items() if s.get("improvement_needed", False)
+    ]
     if low_fields:
         print(f"\n  {len(low_fields)} field(s) below quality threshold:")
         for field in sorted(low_fields)[:5]:
             st = strategies[field]
-            print(f"    {field}: {st['success_rate']:.1%}  (best: {st['best_extractor']})")
+            print(
+                f"    {field}: {st['success_rate']:.1%}  (best: {st['best_extractor']})"
+            )
     print("\n  Reports written to:", output_path)
 
     # Phase 3 ----------------------------------------------------------------
     if not (schema_path and llm_suggester.is_ready()):
         if schema_path and not llm_suggester.is_ready():
-            print("\n  [3/3] LLM self-correction skipped (llm_improvement.enabled = false)")
+            print(
+                "\n  [3/3] LLM self-correction skipped (llm_improvement.enabled = false)"
+            )
         print(sep + "\n")
         return
 
@@ -128,8 +141,10 @@ def analyze_data(
         raw_keys_by_file[fpath.name] = pdf_ext.collect_raw_keys(fpath)
 
     try:
-        schema_fields = _json.loads(schema_path.read_text(encoding="utf-8")).get("fields", [])
-    except Exception:
+        schema_fields = _json.loads(schema_path.read_text(encoding="utf-8")).get(
+            "fields", []
+        )
+    except (OSError, _json.JSONDecodeError):
         schema_fields = []
 
     alias_suggestions = llm_suggester.suggest_aliases(
@@ -148,18 +163,55 @@ def analyze_data(
         print(f"    {fname}: {aliases}")
 
     suggestions_path = output_path / "alias_suggestions.json"
-    suggestions_path.write_text(_json.dumps(alias_suggestions, indent=2), encoding="utf-8")
+    suggestions_path.write_text(
+        _json.dumps(alias_suggestions, indent=2), encoding="utf-8"
+    )
+
+    promotion_cfg = AliasPromotionConfig.from_dict(
+        cfg.get("llm_improvement", {}).get("alias_promotion", {})
+    )
+    ledger_path = output_path / "alias_promotion_state.json"
+    promotion = AliasPromotionLedger(ledger_path).evaluate(
+        suggestions=alias_suggestions,
+        raw_keys_by_file=raw_keys_by_file,
+        cfg=promotion_cfg,
+    )
+    approved_suggestions = promotion.get("approved", {})
+    pending_suggestions = promotion.get("pending", {})
+
+    promotion_report_path = output_path / "alias_promotion_report.json"
+    promotion_report_path.write_text(_json.dumps(promotion, indent=2), encoding="utf-8")
+
+    approved_count = sum(len(v) for v in approved_suggestions.values())
+    pending_count = sum(len(v) for v in pending_suggestions.values())
+    print(
+        "\n  Promotion gate: "
+        f"{approved_count} alias(es) approved, "
+        f"{pending_count} pending confirmation "
+        f"(ledger: {ledger_path.name})"
+    )
 
     if auto_correct:
-        updated = llm_suggester.apply_alias_suggestions(schema_path, alias_suggestions)
-        if updated:
-            print(f"\n  Applied aliases to {updated} field(s) in {schema_path}")
-            print("  Re-run doc-extract-run to pick up the updated aliases.")
+        if not approved_suggestions:
+            print(
+                "\n  No aliases met promotion thresholds yet; schema was not changed."
+            )
+            print(f"  Review pending candidates in {promotion_report_path}")
         else:
-            print("\n  Suggestions already present in schema — nothing to apply.")
+            updated = llm_suggester.apply_alias_suggestions(
+                schema_path, approved_suggestions
+            )
+            if updated:
+                print(f"\n  Applied aliases to {updated} field(s) in {schema_path}")
+                print("  Re-run doc-extract-run to pick up the updated aliases.")
+            else:
+                print(
+                    "\n  Approved aliases already present in schema — nothing to apply."
+                )
     else:
         print(f"\n  Saved to {suggestions_path}")
-        print("  Re-run with --auto-correct to apply, or edit the schema manually.")
+        print(f"  Promotion report: {promotion_report_path}")
+        print("  Re-run with --auto-correct to apply only approved aliases.")
 
     print(sep + "\n")
 

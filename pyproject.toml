@@ -30,6 +30,7 @@ setup-env = "doc_extract_agentic.scripts.setup_env:app"
 analyze-cu = "doc_extract_agentic.scripts.analyze_cu_performance:app"
 improve-cu = "doc_extract_agentic.scripts.improve_cu_analyzer:app"
 analyze-data = "doc_extract_agentic.scripts.analyze_data:app"
+doc-extract-auto-iterate = "doc_extract_agentic.scripts.auto_iterate:app"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
