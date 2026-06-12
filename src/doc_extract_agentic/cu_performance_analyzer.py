@@ -5,8 +5,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
-
 logger = logging.getLogger(__name__)
 
 
@@ -62,7 +60,6 @@ class CUPerformanceAnalyzer:
         for event in events:
             file_name = event.get("file", "unknown")
             results = event.get("results", [])
-            plan = event.get("extractor_plan", [])
 
             for result in results:
                 field_name = result.get("field_name")
@@ -200,9 +197,7 @@ class CUPerformanceAnalyzer:
             },
         }
 
-    def suggest_alias_improvements(
-        self, events: list[dict], schema_aliases: dict[str, list[str]]
-    ) -> dict[str, list[str]]:
+    def suggest_alias_improvements(self, events: list[dict]) -> dict[str, list[str]]:
         """
         Suggest new aliases based on documents CU missed.
 
@@ -212,7 +207,6 @@ class CUPerformanceAnalyzer:
         suggestions = {}
 
         for event in events:
-            file_name = event.get("file")
             results = event.get("results", [])
 
             for result in results:

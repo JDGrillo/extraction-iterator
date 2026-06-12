@@ -7,13 +7,14 @@ azure_content_understanding:
   enabled: false
   mode: fallback_only
   # To enable Azure CU:
-  # 1. Create an Azure Document Intelligence resource in the Azure Portal
+  # 1. Create an Azure AI Content Understanding / Foundry resource in Azure
   # 2. Get your endpoint URL and API key
   # 3. Set them here (or use environment variables: AZURE_CU_ENDPOINT, AZURE_CU_API_KEY)
   # 4. Set enabled: true
   endpoint: ""  # e.g., https://my-resource.cognitiveservices.azure.com/
   api_key: ""   # Get from Azure Portal
-  model: "prebuilt-document"  # Model to use for extraction
+  model: "prebuilt-document"  # Analyzer ID, e.g. prebuilt-document
+  api_version: "2025-11-01"
 
 llm_improvement:
   enabled: false

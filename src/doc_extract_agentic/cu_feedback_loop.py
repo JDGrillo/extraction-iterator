@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 import yaml
 
-from .cu_initialization import build_cu_analyzer_config, build_cu_field_prompt
+from .cu_initialization import build_cu_analyzer_config
 from .cu_performance_analyzer import CUPerformanceAnalyzer
 from .models import OutputSchema
 
@@ -48,7 +49,7 @@ class CUFeedbackLoop:
 
         # Analyze performance
         gaps = self.analyzer.identify_cu_gaps(events)
-        logger.info(f"CU Performance Analysis: {gaps['summary']}")
+        logger.info("CU Performance Analysis: %s", gaps["summary"])
 
         # Identify high-priority fields to improve
         improvements = self._generate_improvements(gaps)
@@ -60,7 +61,7 @@ class CUFeedbackLoop:
         }
         report_path = self.output_dir / "cu_feedback_report.json"
         self.analyzer.write_performance_report(report, report_path)
-        logger.info(f"Feedback report saved to {report_path}")
+        logger.info("Feedback report saved to %s", report_path)
 
         return report
 
@@ -127,7 +128,7 @@ class CUFeedbackLoop:
         with output_config_path.open("w", encoding="utf-8") as f:
             yaml.dump(updated_config, f, default_flow_style=False)
 
-        logger.info(f"Updated config saved to {output_config_path}")
+        logger.info("Updated config saved to %s", output_config_path)
 
     def generate_improved_analyzer_config(self, output_path: Path) -> None:
         """
@@ -144,4 +145,4 @@ class CUFeedbackLoop:
         with output_path.open("w", encoding="utf-8") as f:
             json.dump(analyzer_config, f, indent=2)
 
-        logger.info(f"Improved analyzer config saved to {output_path}")
+        logger.info("Improved analyzer config saved to %s", output_path)

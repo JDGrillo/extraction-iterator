@@ -13,7 +13,6 @@ Usage:
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 
@@ -26,10 +25,10 @@ def prompt_azure_creds() -> dict:
     """Prompt user for Azure credentials."""
     typer.echo("\n=== Azure Content Understanding Setup ===\n")
     typer.echo(
-        "To use Azure CU, you need a Document Intelligence resource in Azure.\n"
+        "To use Azure CU, you need an Azure AI Content Understanding resource in Azure.\n"
         "If you don't have one yet:\n"
         "1. Go to https://portal.azure.com\n"
-        "2. Create a new 'Document Intelligence' resource\n"
+        "2. Create a new 'Azure AI Content Understanding' (or Foundry) resource\n"
         "3. Copy your endpoint and API key\n"
     )
 
@@ -81,23 +80,23 @@ def setup_env(
 
         if creds["endpoint"] and creds["api_key"]:
             # Option to save to environment or config
-            save_method = typer.prompt(
-                "\nHow to save credentials?",
-                type=typer.Choice(["env", "config"]),
-                default="env",
+            save_method = (
+                typer.prompt(
+                    "\nHow to save credentials? (env/config)",
+                    default="config",
+                )
+                .strip()
+                .lower()
             )
 
             if save_method == "env":
-                typer.echo("\nSet these environment variables:")
+                typer.echo("\nSet these environment variables in your terminal:")
                 typer.echo(f'  set AZURE_CU_ENDPOINT={creds["endpoint"]}')
                 typer.echo(f'  set AZURE_CU_API_KEY={creds["api_key"]}')
-                typer.echo("\nOr add to your .env file:")
-                typer.echo(f'AZURE_CU_ENDPOINT={creds["endpoint"]}')
-                typer.echo(f'AZURE_CU_API_KEY={creds["api_key"]}')
             elif save_method == "config":
                 config_path = Path("configs/default.yaml")
                 if config_path.exists():
-                    content = config_path.read_text()
+                    content = config_path.read_text(encoding="utf-8")
                     # Replace placeholders
                     content = content.replace(
                         'endpoint: ""', f'endpoint: "{creds["endpoint"]}"'
@@ -105,7 +104,7 @@ def setup_env(
                     content = content.replace(
                         'api_key: ""', f'api_key: "{creds["api_key"]}"'
                     )
-                    config_path.write_text(content)
+                    config_path.write_text(content, encoding="utf-8")
                     typer.secho(
                         f"  ✓ Credentials saved to {config_path}",
                         fg=typer.colors.GREEN,

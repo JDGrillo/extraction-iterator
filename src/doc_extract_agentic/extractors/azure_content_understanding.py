@@ -21,7 +21,7 @@ class AzureContentUnderstandingExtractor(BaseExtractor):
         """
         Extract candidates using Azure Content Understanding.
 
-        Falls back gracefully if Azure SDK is not installed or config is incomplete.
+        Falls back gracefully if config is incomplete or the service is unavailable.
         """
         cu_cfg = config.get("azure_content_understanding", {})
 
@@ -30,7 +30,7 @@ class AzureContentUnderstandingExtractor(BaseExtractor):
 
         is_valid, error_msg = validate_cu_config(config)
         if not is_valid:
-            logger.debug(f"Azure CU not configured: {error_msg}")
+            logger.debug("Azure CU not configured: %s", error_msg)
             return []
 
         # Lazy-initialize client
@@ -39,6 +39,7 @@ class AzureContentUnderstandingExtractor(BaseExtractor):
                 endpoint=cu_cfg.get("endpoint", ""),
                 api_key=cu_cfg.get("api_key", ""),
                 model=cu_cfg.get("model", "prebuilt-document"),
+                api_version=cu_cfg.get("api_version", "2025-11-01"),
             )
 
         # Build field aliases from schema

@@ -50,24 +50,23 @@ def test_cu_config(
             endpoint=cu_cfg.get("endpoint", ""),
             api_key=cu_cfg.get("api_key", ""),
             model=cu_cfg.get("model", "prebuilt-document"),
+            api_version=cu_cfg.get("api_version", "2025-11-01"),
         )
 
-        # Try to get the client (this validates credentials)
-        cu_client = client._get_client()
-        if cu_client is None:
+        # Validate local client configuration marker.
+        if not client.is_configured():
             typer.secho(
-                "   ✗ Azure SDK not installed (optional for baseline)",
-                fg=typer.colors.YELLOW,
+                "   ✗ Azure CU endpoint or API key missing",
+                fg=typer.colors.RED,
             )
-            typer.echo("\n   To install: pip install azure-ai-documentintelligence")
-        else:
-            typer.secho(
-                "   ✓ Azure client initialized successfully", fg=typer.colors.GREEN
-            )
+            raise typer.Exit(1)
+
+        typer.secho("   ✓ Azure client initialized successfully", fg=typer.colors.GREEN)
 
         typer.echo("\n3. Configuration summary:")
         typer.echo(f"   Endpoint: {cu_cfg.get('endpoint', 'not set')}")
-        typer.echo(f"   Model: {cu_cfg.get('model', 'prebuilt-document')}")
+        typer.echo(f"   Analyzer ID: {cu_cfg.get('model', 'prebuilt-document')}")
+        typer.echo(f"   API Version: {cu_cfg.get('api_version', '2025-11-01')}")
         typer.echo(f"   Enabled: {cu_cfg.get('enabled', False)}")
         typer.echo(f"   Mode: {cu_cfg.get('mode', 'fallback_only')}")
 

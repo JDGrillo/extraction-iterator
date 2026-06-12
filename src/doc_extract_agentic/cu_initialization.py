@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from .models import OutputSchema
 
@@ -39,6 +38,7 @@ def build_cu_analyzer_config(schema: OutputSchema, config: dict) -> dict:
         "endpoint": cu_cfg.get("endpoint", ""),
         "api_key": cu_cfg.get("api_key", ""),
         "model": cu_cfg.get("model", "prebuilt-document"),
+        "api_version": cu_cfg.get("api_version", "2025-11-01"),
         "prompt": build_cu_field_prompt(schema),
         "field_aliases": {
             field.name: field.aliases + [field.name] for field in schema.fields
