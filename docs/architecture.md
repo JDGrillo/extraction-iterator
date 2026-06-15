@@ -43,13 +43,11 @@ Per run, the pipeline emits:
 - `run_trace.json`: plan decisions and selected extractors
 - `learning_events.jsonl`: append-only learning records
 
-## Optional Azure CU Integration
+## Extractor Ensemble
 
-Use as an optional plugin:
-- `enabled: false/true`
-- `mode: fallback_only/assistive`
+Current baseline extractors:
+- llm_native for spreadsheet reasoning with few-shot examples
+- excel_native as deterministic fallback for spreadsheets
+- pdf_native for colon-delimited key-value parsing in PDF text
 
-Recommended baseline behavior:
-- run deterministic extractors first
-- invoke CU for low-confidence fields or ambiguous mappings
-- keep CU evidence for audit trail
+The reconciliation layer maps extractor candidates into one strict output schema.

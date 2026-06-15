@@ -8,8 +8,8 @@ from .auditor import write_audit_summary, write_discrepancies
 from .extractors.registry import build_registry
 from .io_utils import build_output_dataframe, discover_input_files, write_outputs
 from .learner import append_learning_event
-from .models import ExtractionCandidate, OutputSchema
-from .planner import pick_extractors_for_file, should_invoke_cu_fallback
+from .models import ExtractionCandidate, FieldResult, OutputSchema
+from .planner import pick_extractors_for_file
 from .reconciler import reconcile_candidates
 
 logger = logging.getLogger(__name__)
@@ -30,11 +30,68 @@ def run_pipeline(
     per_file_results = []
     run_trace: dict = {"run_id": run_id, "files": []}
 
+    missing_marker = config.get("pipeline", {}).get("missing_value_marker", "not_found")
+
     for file_path in files:
         plan = pick_extractors_for_file(file_path, config)
         candidates: list[ExtractionCandidate] = []
         extraction_errors: list[str] = []
 
+        # --- Tabular all-rows path -------------------------------------------
+        # Try extract_all_rows() first (excel_native supports this for SOV-style
+        # sheets). If it returns rows, emit one output row per data row and skip
+        # the single-record candidate/reconcile flow for this file.
+        tabular_rows: list[dict[str, str]] = []
+        for extractor_name in plan:
+            extractor = registry.get(extractor_name)
+            if extractor is None or not hasattr(extractor, "extract_all_rows"):
+                continue
+            try:
+                tabular_rows = extractor.extract_all_rows(
+                    file_path=file_path, schema=schema, config=config
+                )
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                extraction_errors.append(
+                    f"{extractor_name}.extract_all_rows failed on {file_path.name}: {exc}"
+                )
+            if tabular_rows:
+                break
+
+        if tabular_rows:
+            for row_num, row_data in enumerate(tabular_rows, start=1):
+                source_label = f"{file_path.name}:row_{row_num}"
+                row_results: list[FieldResult] = [
+                    FieldResult(
+                        field_name=f.name,
+                        value=row_data.get(f.name) or missing_marker,
+                        status="found" if row_data.get(f.name) else "not_found",
+                        confidence=0.8 if row_data.get(f.name) else 0.0,
+                        extractor="excel_native",
+                        source_ref=source_label,
+                    )
+                    for f in schema.fields
+                ]
+                all_field_results.append(row_results)
+                per_file_results.append((source_label, row_results))
+
+            run_trace["files"].append(
+                {
+                    "file": file_path.name,
+                    "plan": plan,
+                    "tabular_rows_extracted": len(tabular_rows),
+                    "extraction_errors": extraction_errors,
+                }
+            )
+            append_learning_event(
+                output_dir=output_dir,
+                file_name=file_path.name,
+                extractor_plan=plan,
+                results=row_results,
+                candidates=[],
+            )
+            continue
+
+        # --- Single-record candidate/reconcile path --------------------------
         for extractor_name in plan:
             extractor = registry.get(extractor_name)
             if extractor is None:
@@ -43,26 +100,10 @@ def run_pipeline(
                 candidates.extend(
                     extractor.extract(file_path=file_path, schema=schema, config=config)
                 )
-            except Exception as exc:
+            except Exception as exc:  # pylint: disable=broad-exception-caught
                 msg = f"{extractor_name} failed on {file_path.name}: {exc}"
                 logger.warning(msg)
                 extraction_errors.append(msg)
-
-        provisional_results = reconcile_candidates(candidates, schema, config)
-        low_conf = any(r.status != "found" for r in provisional_results)
-
-        if should_invoke_cu_fallback(low_confidence_found=low_conf, config=config):
-            cu = registry.get("azure_cu")
-            if cu is not None:
-                plan.append("azure_cu")
-                try:
-                    candidates.extend(
-                        cu.extract(file_path=file_path, schema=schema, config=config)
-                    )
-                except Exception as exc:
-                    msg = f"azure_cu failed on {file_path.name}: {exc}"
-                    logger.warning(msg)
-                    extraction_errors.append(msg)
 
         final_results = reconcile_candidates(candidates, schema, config)
 
@@ -71,7 +112,7 @@ def run_pipeline(
             file_name=file_path.name,
             extractor_plan=plan,
             results=final_results,
-            candidates=candidates,  # Pass candidates for feedback loop analysis
+            candidates=candidates,
         )
 
         all_field_results.append(final_results)

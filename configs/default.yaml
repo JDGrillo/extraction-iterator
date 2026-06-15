@@ -2,51 +2,49 @@ pipeline:
   confidence_threshold: 0.75
   missing_value_marker: "not_found"
   max_candidates_per_field: 20
+  deterministic_fallback_enabled: true
 
-azure_content_understanding:
-  enabled: false
-  mode: fallback_only
-  # To enable Azure CU:
-  # 1. Create an Azure AI Content Understanding / Foundry resource in Azure
-  # 2. Get your endpoint URL and API key
-  # 3. Set them here (or use environment variables: AZURE_CU_ENDPOINT, AZURE_CU_API_KEY)
-  # 4. Set enabled: true
-  endpoint: ""  # e.g., https://my-resource.cognitiveservices.azure.com/
-  api_key: ""   # Get from Azure Portal
-  model: "prebuilt-document"  # Analyzer ID, e.g. prebuilt-document
-  api_version: "2025-11-01"
-
-llm_improvement:
-  enabled: false
-  provider: openai_compatible
-  # Optional and disabled by default.
-  # If enabled, suggestions are merged with deterministic suggestions.
-  # You can use environment variables instead of hardcoding secrets:
-  # LLM_IMPROVEMENT_ENDPOINT, LLM_IMPROVEMENT_API_KEY
-  endpoint: ""  # e.g., https://api.openai.com/v1
+local_llm:
+  enabled: true
+  provider: "foundry_local_sdk"
+  endpoint: "http://localhost:5764/v1"
+  model: "phi-4-mini"
   api_key: ""
-  model: "gpt-4o-mini"
-  timeout_seconds: 30
-  max_fields: 20
-  alias_promotion:
-    enabled: true
-    min_confirmed_runs: 2
-    min_docs_per_run: 2
-    min_doc_ratio: 0.15
+  timeout_seconds: 600
+  temperature: 0.0
+  app_name: "foundry"
+  auto_download_model: true
+
+llm_extractor:
+  max_examples: 1
+  retrieval_mode: "hybrid"
+  default_confidence: 0.95
+  max_sheets: 1
+  max_rows_per_sheet: 80
+  max_cols_per_sheet: 30
+  max_cell_chars: 120
+  example_store: "./examples/training_examples.jsonl"
+
+auto_learning:
+  enabled: true
+  auto_promote_examples: true
+  promote_split: "train"
+  min_row_accuracy: 0.98
+  min_labeled_fields: 2
+  max_promoted_per_iteration: 50
+  field_promotion:
+    block_on_any_regression: true
+    critical_fields: []
+    allowed_regressed_fields: []
 
 auto_iteration:
-  max_iterations: 5
-  target_success_rate: 0.85
-  min_improvement_delta: 0.05
-  target_confidence: 0.75
-  critical_field_threshold: 0.5
+  max_iterations: 6
+  target_accuracy: 0.97
+  min_improvement_delta: 0.002
 
 extractor_priors:
-  excel_native: 0.95
-  pdf_native: 0.85
-  azure_cu: 0.80
+  llm_native: 1.0
+  excel_native: 0.5
+  pdf_native: 0.5
 
-field_aliases:
-  invoice_number: ["invoice number", "invoice #", "inv no", "invoice no"]
-  invoice_date: ["invoice date", "date"]
-  total_amount: ["total", "amount due", "invoice total", "grand total"]
+field_aliases: {}

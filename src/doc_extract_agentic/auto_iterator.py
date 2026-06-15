@@ -1,364 +1,398 @@
-"""Autonomous iteration orchestrator: extract, analyze, improve, repeat until success."""
+"""Autonomous local-LLM extraction loop with deterministic evaluation gates."""
 
 from __future__ import annotations
 
 import json
-import logging
-from dataclasses import dataclass, asdict
+import shutil
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .alias_promotion import AliasPromotionConfig, AliasPromotionLedger
 from .config import load_config, load_schema
-from .data_discovery import DataDiscoverer
-from .extractor_performance_analyzer import ExtractorPerformanceAnalyzer
+from .example_promoter import promote_validated_examples
+from .example_store import ExampleStore
+from .evaluator import evaluate_extraction, write_evaluation_report
 from .extractors.excel_native import ExcelNativeExtractor
-from .extractors.pdf_native import PdfNativeExtractor
-from .llm_improvement import LLMImprovementSuggester
+from .improvement_agent import apply_alias_updates, propose_alias_updates
 from .pipeline import run_pipeline
 
-logger = logging.getLogger(__name__)
+
+@dataclass
+class AutoIterateConfig:
+    max_iterations: int = 6
+    target_accuracy: float = 0.97
+    min_improvement_delta: float = 0.002
+
+
+@dataclass
+class IterationSnapshot:
+    iteration: int
+    run_id: str
+    validation_accuracy: float
+    holdout_accuracy: float
+    total_cells: int
+    correct_cells: int
+    proposal_fields: int
+    aliases_applied: int
+    promoted: bool
+    rationale: str
+    regressed_fields: list[str]
+    promoted_examples: int
 
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-@dataclass
-class IterationMetrics:
-    iteration: int
-    timestamp: str
-    field_count: int
-    found_count: int
-    success_rate: float
-    avg_confidence: float
-    critical_fields: int
-    good_fields: int
-    fields_below_target: int
-    aliases_approved: int
-    aliases_applied: int
-
-
-@dataclass
-class AutoIterateConfig:
-    max_iterations: int = 5
-    target_success_rate: float = 0.85
-    min_improvement_delta: float = 0.05
-    target_confidence: float = 0.75
-    critical_field_threshold: float = 0.5
-
-
 class AutoIterator:
-    """Orchestrate autonomous extraction improvement iterations."""
-
     def __init__(
         self,
         input_dir: Path,
         output_base_dir: Path,
         schema_path: Path,
         config_path: Path,
+        ground_truth_path: Path,
         auto_cfg: AutoIterateConfig,
     ) -> None:
         self.input_dir = input_dir
         self.output_base_dir = output_base_dir
         self.schema_path = schema_path
         self.config_path = config_path
+        self.ground_truth_path = ground_truth_path
         self.auto_cfg = auto_cfg
+
         self.cfg = load_config(config_path)
-        self.iteration_history: list[IterationMetrics] = []
+        self.history: list[IterationSnapshot] = []
         self.decisions: list[str] = []
 
-    def run(self) -> dict[str, Any]:
-        """Execute autonomous iteration loop until convergence or max iterations."""
-        self.output_base_dir.mkdir(parents=True, exist_ok=True)
-
-        sep = "=" * 70
-        print(f"\n{sep}\nAUTONOMOUS EXTRACTION ITERATION\n{sep}")
-        print(f"  Input: {self.input_dir}")
-        print(f"  Schema: {self.schema_path}")
-        print(f"  Max iterations: {self.auto_cfg.max_iterations}")
-        print(f"  Target success rate: {self.auto_cfg.target_success_rate:.0%}")
-        print(f"  Min improvement delta: {self.auto_cfg.min_improvement_delta:.0%}")
-
-        for iter_num in range(1, self.auto_cfg.max_iterations + 1):
-            print(f"\n{'-' * 70}")
-            print(f"[Iteration {iter_num}/{self.auto_cfg.max_iterations}]")
-            print(f"{'-' * 70}")
-
-            iter_dir = self.output_base_dir / f"iter_{iter_num:02d}"
-            iter_dir.mkdir(parents=True, exist_ok=True)
-
-            # Phase 1: Extract
-            print(f"\n  [1] Running extraction ...")
-            result = run_pipeline(
-                input_dir=self.input_dir,
-                output_dir=iter_dir,
-                schema=self._load_schema(),
-                config=self.cfg,
-                ground_truth=None,
+        self.working_schema_path = self.output_base_dir / "working_schema.json"
+        self.staging_schema_path = self.output_base_dir / "staging_schema.json"
+        self.example_store_path = Path(
+            str(
+                self.cfg.get("llm_extractor", {}).get(
+                    "example_store", "./examples/training_examples.jsonl"
+                )
             )
-            print(f"      ✓ Run ID: {result['run_id']}")
+        )
+        self.split_by_source = self._load_example_splits(self.example_store_path)
 
-            # Phase 2: Analyze & measure
-            print(f"\n  [2] Analyzing performance ...")
-            metrics = self._measure_iteration(iter_num, iter_dir)
-            self.iteration_history.append(metrics)
-            self._print_metrics(metrics)
+    def run(self) -> dict[str, Any]:
+        self.output_base_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(self.schema_path, self.working_schema_path)
 
-            # Phase 3: Check success criteria
-            decision = self._evaluate_convergence(metrics, iter_num)
-            self.decisions.append(decision)
+        print("\n" + "=" * 72)
+        print("LOCAL LLM AUTONOMOUS EXTRACTION LOOP")
+        print("=" * 72)
+        print(f"Input: {self.input_dir}")
+        print(f"Ground truth: {self.ground_truth_path}")
+        print(f"Working schema: {self.working_schema_path}")
 
-            if decision.startswith("[STOP]"):
-                print(f"\n  Decision: {decision}")
+        for iteration in range(1, self.auto_cfg.max_iterations + 1):
+            print("\n" + "-" * 72)
+            print(f"Iteration {iteration}/{self.auto_cfg.max_iterations}")
+            print("-" * 72)
+
+            run_dir = self.output_base_dir / f"iter_{iteration:02d}" / "candidate"
+            candidate_eval = self._run_and_evaluate(
+                run_dir, self.working_schema_path, split="validation"
+            )
+            candidate_holdout = self._evaluate_existing_output(
+                run_dir=run_dir,
+                split="holdout",
+            )
+            print(
+                f"Candidate validation accuracy: {candidate_eval.accuracy:.2%} "
+                f"({candidate_eval.correct_cells}/{candidate_eval.total_cells})"
+            )
+            print(f"Candidate holdout accuracy: {candidate_holdout.accuracy:.2%}")
+
+            if candidate_eval.accuracy >= self.auto_cfg.target_accuracy:
+                self.history.append(
+                    IterationSnapshot(
+                        iteration=iteration,
+                        run_id=self._read_run_id(run_dir),
+                        validation_accuracy=candidate_eval.accuracy,
+                        holdout_accuracy=candidate_holdout.accuracy,
+                        total_cells=candidate_eval.total_cells,
+                        correct_cells=candidate_eval.correct_cells,
+                        proposal_fields=0,
+                        aliases_applied=0,
+                        promoted=False,
+                        rationale="Target accuracy reached",
+                        regressed_fields=[],
+                        promoted_examples=0,
+                    )
+                )
+                self.decisions.append("[STOP] Target accuracy reached")
                 break
 
-            # Phase 4: Improve schema (if not final iteration)
-            print(f"\n  [3] Applying improvements ...")
-            aliases_approved, aliases_applied = self._apply_improvements(iter_dir)
-            print(f"      ✓ Approved: {aliases_approved}, Applied: {aliases_applied}")
+            proposal, aliases_applied = self._propose_and_stage_updates(
+                failures=candidate_eval.failures
+            )
 
             if aliases_applied == 0:
-                print(f"\n  No new aliases to apply; stopping iteration.")
-                self.decisions.append("[STOP] No more improvements available")
+                self.history.append(
+                    IterationSnapshot(
+                        iteration=iteration,
+                        run_id=self._read_run_id(run_dir),
+                        validation_accuracy=candidate_eval.accuracy,
+                        holdout_accuracy=candidate_holdout.accuracy,
+                        total_cells=candidate_eval.total_cells,
+                        correct_cells=candidate_eval.correct_cells,
+                        proposal_fields=len(proposal.alias_updates),
+                        aliases_applied=0,
+                        promoted=False,
+                        rationale=proposal.rationale,
+                        regressed_fields=[],
+                        promoted_examples=0,
+                    )
+                )
+                self.decisions.append("[STOP] No promotable alias updates")
                 break
 
-        # Write iteration report
-        report = self._generate_report()
+            validation_dir = (
+                self.output_base_dir / f"iter_{iteration:02d}" / "validation"
+            )
+            validation_eval = self._run_and_evaluate(
+                validation_dir, self.staging_schema_path, split="validation"
+            )
+            validation_holdout = self._evaluate_existing_output(
+                run_dir=validation_dir,
+                split="holdout",
+            )
+            delta = validation_eval.accuracy - candidate_eval.accuracy
+            regressed_fields = self._find_regressed_fields(
+                baseline=candidate_eval,
+                challenger=validation_eval,
+            )
+            field_gate_ok = self._passes_field_gate(regressed_fields)
+
+            if (
+                validation_eval.accuracy + 1e-9 >= candidate_eval.accuracy
+                and delta >= self.auto_cfg.min_improvement_delta
+                and field_gate_ok
+            ):
+                shutil.copyfile(self.staging_schema_path, self.working_schema_path)
+                promoted = True
+                rationale = (
+                    f"Promoted staged aliases. Validation accuracy {candidate_eval.accuracy:.2%} -> "
+                    f"{validation_eval.accuracy:.2%}"
+                )
+                self.decisions.append(f"[CONTINUE] {rationale}")
+                final_eval = validation_eval
+                final_holdout = validation_holdout
+
+                promoted_examples = self._auto_promote_examples(validation_dir)
+            else:
+                promoted = False
+                regression_msg = ""
+                if regressed_fields and not field_gate_ok:
+                    regression_msg = (
+                        f"; field regressions blocked: {', '.join(regressed_fields)}"
+                    )
+                rationale = f"Rejected staged aliases (delta {delta:+.2%}{regression_msg}); kept current schema"
+                self.decisions.append(f"[STOP] {rationale}")
+                final_eval = candidate_eval
+                final_holdout = candidate_holdout
+                promoted_examples = 0
+
+            self.history.append(
+                IterationSnapshot(
+                    iteration=iteration,
+                    run_id=self._read_run_id(run_dir),
+                    validation_accuracy=final_eval.accuracy,
+                    holdout_accuracy=final_holdout.accuracy,
+                    total_cells=final_eval.total_cells,
+                    correct_cells=final_eval.correct_cells,
+                    proposal_fields=len(proposal.alias_updates),
+                    aliases_applied=aliases_applied,
+                    promoted=promoted,
+                    rationale=rationale,
+                    regressed_fields=regressed_fields,
+                    promoted_examples=promoted_examples,
+                )
+            )
+
+            if not promoted:
+                break
+
+        final_schema = self.output_base_dir / "final_schema.json"
+        shutil.copyfile(self.working_schema_path, final_schema)
+
+        report = self._build_report(final_schema)
         report_path = self.output_base_dir / "iteration_report.json"
         report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
-        print(f"\n{sep}")
-        print(f"FINAL REPORT")
-        print(f"{sep}")
-        print(
-            f"  Iterations: {len(self.iteration_history)}/{self.auto_cfg.max_iterations}"
-        )
-        if self.iteration_history:
-            first = self.iteration_history[0]
-            last = self.iteration_history[-1]
-            improvement = last.success_rate - first.success_rate
+        print("\n" + "=" * 72)
+        print("AUTONOMOUS LOOP COMPLETE")
+        print("=" * 72)
+        print(f"Iterations: {len(self.history)}")
+        if self.history:
             print(
-                f"  First-to-last improvement: {first.success_rate:.1%} → {last.success_rate:.1%} ({improvement:+.1%})"
+                f"Final validation accuracy: {self.history[-1].validation_accuracy:.2%}"
             )
-        print(f"  Report: {report_path}")
-        print(f"{sep}\n")
+            print(f"Final holdout accuracy: {self.history[-1].holdout_accuracy:.2%}")
+        print(f"Report: {report_path}")
+        print(f"Final schema: {final_schema}")
 
-        return {
-            "iterations": len(self.iteration_history),
-            "max_iterations": self.auto_cfg.max_iterations,
-            "report_path": str(report_path),
-            "output_dir": str(self.output_base_dir),
-            "history": [asdict(m) for m in self.iteration_history],
-        }
+        return report
 
-    def _load_schema(self):
-        """Load current schema from file."""
-        return load_schema(self.schema_path)
-
-    def _measure_iteration(self, iter_num: int, iter_dir: Path) -> IterationMetrics:
-        """Measure extraction performance for this iteration."""
-        perf_analyzer = ExtractorPerformanceAnalyzer(iter_dir)
-        events = perf_analyzer.load_learning_events()
-
-        if not events:
-            return IterationMetrics(
-                iteration=iter_num,
-                timestamp=_utc_now_iso(),
-                field_count=0,
-                found_count=0,
-                success_rate=0.0,
-                avg_confidence=0.0,
-                critical_fields=0,
-                good_fields=0,
-                fields_below_target=0,
-                aliases_approved=0,
-                aliases_applied=0,
-            )
-
-        performance = perf_analyzer.analyze_all_extractors(events)
-        strategies = perf_analyzer.identify_best_strategies(performance)
-
-        found_count = sum(
-            1
-            for _, s in strategies.items()
-            if s.get("success_rate", 0.0) >= self.auto_cfg.target_confidence
+    def _run_and_evaluate(self, run_dir: Path, schema_path: Path, split: str):
+        result = run_pipeline(
+            input_dir=self.input_dir,
+            output_dir=run_dir,
+            schema=load_schema(schema_path),
+            config=self.cfg,
+            ground_truth=self.ground_truth_path,
         )
-        good_count = sum(
-            1
-            for _, s in strategies.items()
-            if s.get("success_rate", 0.0) >= self.auto_cfg.target_success_rate
+        _ = result
+
+        split_set = self._split_source_files(split)
+        eval_result = evaluate_extraction(
+            extracted_path=run_dir / "extracted_output.xlsx",
+            ground_truth_path=self.ground_truth_path,
+            include_source_files=split_set,
         )
-        critical_count = sum(
-            1
-            for _, s in strategies.items()
-            if 0.0 < s.get("success_rate", 0.0) < self.auto_cfg.critical_field_threshold
-        )
-        below_target = sum(
-            1
-            for _, s in strategies.items()
-            if s.get("success_rate", 0.0) < self.auto_cfg.target_success_rate
+        write_evaluation_report(eval_result, run_dir / "evaluation_report.json")
+        return eval_result
+
+    def _evaluate_existing_output(self, run_dir: Path, split: str):
+        split_set = self._split_source_files(split)
+        return evaluate_extraction(
+            extracted_path=run_dir / "extracted_output.xlsx",
+            ground_truth_path=self.ground_truth_path,
+            include_source_files=split_set,
         )
 
-        # Calculate overall success rate
-        all_confidence = []
-        for _, extractors in performance.items():
-            for ext_perf in extractors.values():
-                all_confidence.append(ext_perf.get("avg_confidence", 0.0))
+    def _propose_and_stage_updates(self, failures: list[dict[str, Any]]):
+        raw_keys_by_file = self._collect_raw_keys()
+        shutil.copyfile(self.working_schema_path, self.staging_schema_path)
 
-        avg_conf = sum(all_confidence) / len(all_confidence) if all_confidence else 0.0
-
-        return IterationMetrics(
-            iteration=iter_num,
-            timestamp=_utc_now_iso(),
-            field_count=len(strategies),
-            found_count=found_count,
-            success_rate=found_count / len(strategies) if strategies else 0.0,
-            avg_confidence=round(avg_conf, 3),
-            critical_fields=critical_count,
-            good_fields=good_count,
-            fields_below_target=below_target,
-            aliases_approved=0,
-            aliases_applied=0,
+        proposal = propose_alias_updates(
+            config=self.cfg,
+            schema_path=self.staging_schema_path,
+            failures=failures,
+            raw_keys_by_file=raw_keys_by_file,
         )
-
-    def _print_metrics(self, metrics: IterationMetrics) -> None:
-        """Print iteration metrics to console."""
-        print(f"      Fields: {metrics.field_count}")
-        print(f"      Success rate: {metrics.success_rate:.1%}")
-        print(f"      Avg confidence: {metrics.avg_confidence:.3f}")
-        print(
-            f"      Good (≥{self.auto_cfg.target_success_rate:.0%}): {metrics.good_fields}"
+        aliases_applied = apply_alias_updates(
+            schema_path=self.staging_schema_path,
+            updates=proposal.alias_updates,
         )
-        print(f"      Below target: {metrics.fields_below_target}")
-        if metrics.critical_fields > 0:
-            print(
-                f"      ⚠ Critical (<{self.auto_cfg.critical_field_threshold:.0%}): {metrics.critical_fields}"
-            )
+        return proposal, aliases_applied
 
-    def _evaluate_convergence(self, metrics: IterationMetrics, iter_num: int) -> str:
-        """Determine whether to continue iterating."""
-        if metrics.success_rate >= self.auto_cfg.target_success_rate:
-            return f"[STOP] Target success rate reached ({metrics.success_rate:.1%})"
-
-        if iter_num >= self.auto_cfg.max_iterations:
-            return f"[STOP] Max iterations reached"
-
-        if len(self.iteration_history) >= 2:
-            prev = self.iteration_history[-2]
-            improvement = metrics.success_rate - prev.success_rate
-            if improvement < self.auto_cfg.min_improvement_delta:
-                return f"[STOP] Improvement plateau (<{self.auto_cfg.min_improvement_delta:.1%})"
-
-        return "[CONTINUE] Improvement needed and budget remaining"
-
-    def _apply_improvements(self, iter_dir: Path) -> tuple[int, int]:
-        """Apply approved alias improvements from this iteration."""
-        llm_suggester = LLMImprovementSuggester.from_config(self.cfg)
-        if not llm_suggester.is_ready():
-            return 0, 0
-
-        # Collect raw keys from input
-        excel_ext = ExcelNativeExtractor()
-        pdf_ext = PdfNativeExtractor()
-        raw_keys_by_file: dict[str, list[str]] = {}
+    def _collect_raw_keys(self) -> dict[str, list[str]]:
+        ext = ExcelNativeExtractor()
+        results: dict[str, list[str]] = {}
         for fpath in list(self.input_dir.glob("**/*.xlsx")) + list(
             self.input_dir.glob("**/*.xls")
         ):
-            raw_keys_by_file[fpath.name] = excel_ext.collect_raw_keys(fpath)
-        for fpath in self.input_dir.glob("**/*.pdf"):
-            raw_keys_by_file[fpath.name] = pdf_ext.collect_raw_keys(fpath)
+            results[fpath.name] = ext.collect_raw_keys(fpath)
+        return results
 
-        # Load current schema and extract strategies
-        perf_analyzer = ExtractorPerformanceAnalyzer(iter_dir)
-        events = perf_analyzer.load_learning_events()
-        if not events:
-            return 0, 0
-
-        performance = perf_analyzer.analyze_all_extractors(events)
-        strategies = perf_analyzer.identify_best_strategies(performance)
-
-        # Identify low-performing fields
-        low_success = [
-            f for f, s in strategies.items() if 0.0 < s.get("success_rate", 1.0) < 0.6
-        ]
-        not_found = [
-            f for f, s in strategies.items() if s.get("success_rate", 1.0) == 0.0
-        ]
-        correction_targets = list(dict.fromkeys(not_found + low_success))
-
-        if not correction_targets:
-            return 0, 0
-
-        # Get alias suggestions
+    def _read_run_id(self, run_dir: Path) -> str:
+        trace_path = run_dir / "run_trace.json"
+        if not trace_path.exists():
+            return ""
         try:
-            import json as _json
+            payload = json.loads(trace_path.read_text(encoding="utf-8"))
+            return str(payload.get("run_id", ""))
+        except json.JSONDecodeError:
+            return ""
 
-            schema_fields = _json.loads(
-                self.schema_path.read_text(encoding="utf-8")
-            ).get("fields", [])
-        except (OSError, Exception):
-            schema_fields = []
+    def _load_example_splits(self, example_store_path: Path) -> dict[str, str]:
+        if not example_store_path.exists():
+            return {}
 
-        alias_suggestions = llm_suggester.suggest_aliases(
-            schema_fields=schema_fields,
-            raw_keys_by_file=raw_keys_by_file,
-            not_found_fields=correction_targets,
-        )
+        split_by_source: dict[str, str] = {}
+        for record in ExampleStore(example_store_path).load():
+            source = record.source_file.strip().lower()
+            if not source:
+                continue
+            split_by_source[source] = record.split
+        return split_by_source
 
-        if not alias_suggestions:
-            return 0, 0
-
-        # Evaluate promotion
-        promotion_cfg = AliasPromotionConfig.from_dict(
-            self.cfg.get("llm_improvement", {}).get("alias_promotion", {})
-        )
-        ledger_path = self.output_base_dir / "alias_promotion_state.json"
-        promotion = AliasPromotionLedger(ledger_path).evaluate(
-            suggestions=alias_suggestions,
-            raw_keys_by_file=raw_keys_by_file,
-            cfg=promotion_cfg,
-        )
-
-        approved = promotion.get("approved", {})
-        if not approved:
-            return len(alias_suggestions), 0
-
-        # Apply approved aliases
-        applied = llm_suggester.apply_alias_suggestions(self.schema_path, approved)
-
-        # Reload config for next iteration
-        self.cfg = load_config(self.config_path)
-
-        return len(alias_suggestions), applied
-
-    def _generate_report(self) -> dict[str, Any]:
-        """Generate comprehensive iteration report."""
-        report = {
-            "started_at": _utc_now_iso(),
-            "input_dir": str(self.input_dir),
-            "schema": str(self.schema_path),
-            "config": str(self.config_path),
-            "auto_config": asdict(self.auto_cfg),
-            "iterations": [asdict(m) for m in self.iteration_history],
-            "decisions": self.decisions,
+    def _split_source_files(self, split: str) -> set[str] | None:
+        split_l = split.lower()
+        if not self.split_by_source:
+            return None
+        return {
+            source
+            for source, assigned in self.split_by_source.items()
+            if assigned == split_l
         }
 
-        if self.iteration_history:
-            first = self.iteration_history[0]
-            last = self.iteration_history[-1]
-            report["summary"] = {
-                "total_iterations": len(self.iteration_history),
-                "max_iterations": self.auto_cfg.max_iterations,
-                "fields_processed": last.field_count,
-                "initial_success_rate": first.success_rate,
-                "final_success_rate": last.success_rate,
-                "improvement": last.success_rate - first.success_rate,
-                "fields_at_target": last.good_fields,
-                "fields_below_target": last.fields_below_target,
-                "critical_fields_remaining": last.critical_fields,
-                "converged": last.success_rate >= self.auto_cfg.target_success_rate,
-            }
+    def _find_regressed_fields(self, baseline, challenger) -> list[str]:
+        regressed: list[str] = []
+        for field, bstats in baseline.per_field.items():
+            cstats = challenger.per_field.get(field)
+            if cstats is None:
+                continue
+            if cstats.get("accuracy", 0.0) + 1e-9 < bstats.get("accuracy", 0.0):
+                regressed.append(field)
+        return sorted(regressed)
 
-        return report
+    def _passes_field_gate(self, regressed_fields: list[str]) -> bool:
+        gate_cfg = self.cfg.get("auto_learning", {}).get("field_promotion", {})
+        block_any = bool(gate_cfg.get("block_on_any_regression", True))
+        allowed_regressions = set(gate_cfg.get("allowed_regressed_fields", []))
+        critical_fields = set(gate_cfg.get("critical_fields", []))
+
+        if any(field in critical_fields for field in regressed_fields):
+            return False
+
+        disallowed = [f for f in regressed_fields if f not in allowed_regressions]
+        if block_any and disallowed:
+            return False
+        return True
+
+    def _auto_promote_examples(self, run_dir: Path) -> int:
+        learn_cfg = self.cfg.get("auto_learning", {})
+        if not bool(learn_cfg.get("enabled", True)):
+            return 0
+        if not bool(learn_cfg.get("auto_promote_examples", True)):
+            return 0
+
+        schema = load_schema(self.working_schema_path)
+        promote_result = promote_validated_examples(
+            input_dir=self.input_dir,
+            run_dir=run_dir,
+            ground_truth_path=self.ground_truth_path,
+            schema_field_names=[field.name for field in schema.fields],
+            example_store_path=self.example_store_path,
+            split_by_source=self.split_by_source,
+            promote_split=str(learn_cfg.get("promote_split", "train")),
+            min_row_accuracy=float(learn_cfg.get("min_row_accuracy", 0.98)),
+            min_labeled_fields=int(learn_cfg.get("min_labeled_fields", 2)),
+            max_promoted_per_iteration=int(
+                learn_cfg.get("max_promoted_per_iteration", 50)
+            ),
+            max_sheets=int(self.cfg.get("llm_extractor", {}).get("max_sheets", 5)),
+            max_rows_per_sheet=int(
+                self.cfg.get("llm_extractor", {}).get("max_rows_per_sheet", 80)
+            ),
+            max_cols_per_sheet=int(
+                self.cfg.get("llm_extractor", {}).get("max_cols_per_sheet", 20)
+            ),
+            max_cell_chars=int(
+                self.cfg.get("llm_extractor", {}).get("max_cell_chars", 120)
+            ),
+        )
+        return promote_result.promoted_rows
+
+    def _build_report(self, final_schema_path: Path) -> dict[str, Any]:
+        holdout_accuracy = None
+        if self.history:
+            holdout_accuracy = self.history[-1].holdout_accuracy
+
+        return {
+            "started_at": _utc_now_iso(),
+            "input_dir": str(self.input_dir),
+            "ground_truth": str(self.ground_truth_path),
+            "config": str(self.config_path),
+            "auto_config": asdict(self.auto_cfg),
+            "history": [asdict(item) for item in self.history],
+            "decisions": self.decisions,
+            "holdout_accuracy": holdout_accuracy,
+            "final_schema": str(final_schema_path),
+        }

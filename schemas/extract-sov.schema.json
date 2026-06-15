@@ -1,0 +1,106 @@
+{
+  "schema_name": "sov_extraction_output",
+  "fields": [
+    {
+      "name": "location_name",
+      "type": "string",
+      "required": false,
+      "aliases": [
+        "location name",
+        "Location Name"
+      ]
+    },
+    {
+      "name": "occupancy_type",
+      "type": "string",
+      "required": false,
+      "aliases": [
+        "occupancy type",
+        "Occupancy Type"
+      ]
+    },
+    {
+      "name": "street_address_text",
+      "type": "string",
+      "required": false,
+      "aliases": [
+        "street / address text",
+        "Street / Address Text"
+      ]
+    },
+    {
+      "name": "city",
+      "type": "string",
+      "required": false,
+      "aliases": [
+        "city",
+        "City"
+      ]
+    },
+    {
+      "name": "state",
+      "type": "string",
+      "required": false,
+      "aliases": [
+        "state",
+        "State"
+      ]
+    },
+    {
+      "name": "zip",
+      "type": "string",
+      "required": false,
+      "aliases": [
+        "zip",
+        "ZIP"
+      ]
+    },
+    {
+      "name": "building_value",
+      "type": "number",
+      "required": false,
+      "aliases": [
+        "building value",
+        "Building Value"
+      ]
+    },
+    {
+      "name": "contents_value",
+      "type": "number",
+      "required": false,
+      "aliases": [
+        "contents value",
+        "Contents Value"
+      ]
+    },
+    {
+      "name": "equipment_value",
+      "type": "number",
+      "required": false,
+      "aliases": [
+        "equipment value",
+        "Equipment Value"
+      ]
+    },
+    {
+      "name": "business_income_value",
+      "type": "number",
+      "required": false,
+      "aliases": [
+        "business income value",
+        "Business Income Value"
+      ]
+    },
+    {
+      "name": "total_insured_value",
+      "type": "number",
+      "required": false,
+      "aliases": [
+        "total insured value",
+        "Total Insured Value",
+        "TIV",
+        "tiv"
+      ]
+    }
+  ]
+}

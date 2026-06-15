@@ -1,15 +1,5 @@
 #!/usr/bin/env python
-"""
-Interactive setup script for Azure Content Understanding.
-
-This script guides you through:
-1. Installing optional dependencies
-2. Configuring Azure credentials
-3. Initializing the CU analyzer
-
-Usage:
-    python -m doc_extract_agentic.scripts.setup_env
-"""
+"""Interactive setup script for Foundry Local model extraction."""
 
 from __future__ import annotations
 
@@ -18,112 +8,122 @@ from pathlib import Path
 
 import typer
 
-app = typer.Typer(help="Interactive setup for Azure CU")
+app = typer.Typer(help="Interactive setup for Foundry Local extraction")
 
 
-def prompt_azure_creds() -> dict:
-    """Prompt user for Azure credentials."""
-    typer.echo("\n=== Azure Content Understanding Setup ===\n")
-    typer.echo(
-        "To use Azure CU, you need an Azure AI Content Understanding resource in Azure.\n"
-        "If you don't have one yet:\n"
-        "1. Go to https://portal.azure.com\n"
-        "2. Create a new 'Azure AI Content Understanding' (or Foundry) resource\n"
-        "3. Copy your endpoint and API key\n"
-    )
+def _run(cmd: list[str]) -> bool:
+    try:
+        subprocess.check_call(cmd)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
 
-    endpoint = typer.prompt(
-        "Enter your Azure CU endpoint (e.g., https://my-resource.cognitiveservices.azure.com/)",
-        default="",
-    ).strip()
 
-    api_key = typer.prompt(
-        "Enter your Azure CU API key",
-        default="",
-        hide_input=True,
-    ).strip()
+def _warm_model_with_sdk(model_alias: str, app_name: str) -> bool:
+    try:
+        from foundry_local_sdk import Configuration, FoundryLocalManager
+    except ModuleNotFoundError:
+        return False
 
-    return {"endpoint": endpoint, "api_key": api_key}
+    try:
+        FoundryLocalManager.initialize(Configuration(app_name=app_name))
+        manager = FoundryLocalManager.instance
+        model = manager.catalog.get_model(model_alias)
+        if model is None:
+            typer.secho(
+                f"  ✗ Model alias not found in catalog: {model_alias}",
+                fg=typer.colors.RED,
+            )
+            return False
+
+        is_cached = True
+        if hasattr(model, "is_cached"):
+            try:
+                is_cached = bool(model.is_cached())
+            except Exception:  # pylint: disable=broad-exception-caught
+                is_cached = True
+
+        if not is_cached and hasattr(model, "download"):
+            typer.echo(f"  Downloading model alias: {model_alias}")
+            model.download(lambda _pct: None)
+
+        if hasattr(model, "load"):
+            model.load()
+
+        typer.secho(
+            f"  ✓ Model is ready in Foundry Local: {model_alias}",
+            fg=typer.colors.GREEN,
+        )
+        return True
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        typer.secho(f"  ✗ Foundry Local SDK warmup failed: {exc}", fg=typer.colors.RED)
+        return False
 
 
 @app.callback(invoke_without_command=True)
 def setup_env(
-    install_azure: bool = typer.Option(True, help="Install Azure SDK dependencies"),
-    config_creds: bool = typer.Option(True, help="Configure Azure credentials"),
+    install_sdk: bool = typer.Option(
+        True,
+        help="Install Foundry Local Python SDK (Windows package)",
+    ),
+    pull_model: bool = typer.Option(
+        True,
+        help="Download/warm model alias via Foundry Local SDK",
+    ),
+    model_alias: str = typer.Option("phi-4", help="Foundry Local model alias"),
+    write_examples_file: bool = typer.Option(
+        True,
+        help="Create empty example store file if missing",
+    ),
 ) -> None:
-    """Set up environment for Azure Content Understanding."""
+    typer.secho(
+        "=== Foundry Local Extraction Setup ===\n",
+        fg=typer.colors.BLUE,
+        bold=True,
+    )
 
-    typer.secho("=== Document Extraction Setup ===\n", fg=typer.colors.BLUE, bold=True)
+    typer.echo("Step 1: Checking Foundry Local CLI...")
+    if _run(["foundry", "--version"]):
+        typer.secho("  ✓ Foundry Local CLI detected", fg=typer.colors.GREEN)
+    else:
+        typer.secho(
+            "  ✗ Foundry Local CLI not found. Install with: winget install Microsoft.FoundryLocal",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(1)
 
-    # Step 1: Install optional dependencies
-    if install_azure:
-        typer.echo("Step 1: Installing Azure SDK dependencies...")
-        try:
-            subprocess.check_call(
-                ["pip", "install", "-e", ".[azure]"],
-                cwd=Path(__file__).parent.parent.parent.parent,
-            )
-            typer.secho("  ✓ Azure dependencies installed\n", fg=typer.colors.GREEN)
-        except subprocess.CalledProcessError as e:
-            typer.secho(
-                f"  ✗ Installation failed: {e}",
-                fg=typer.colors.RED,
-                err=True,
-            )
-            raise typer.Exit(1)
-
-    # Step 2: Configure credentials
-    if config_creds:
-        typer.echo("Step 2: Configuring Azure credentials...\n")
-
-        creds = prompt_azure_creds()
-
-        if creds["endpoint"] and creds["api_key"]:
-            # Option to save to environment or config
-            save_method = (
-                typer.prompt(
-                    "\nHow to save credentials? (env/config)",
-                    default="config",
-                )
-                .strip()
-                .lower()
-            )
-
-            if save_method == "env":
-                typer.echo("\nSet these environment variables in your terminal:")
-                typer.echo(f'  set AZURE_CU_ENDPOINT={creds["endpoint"]}')
-                typer.echo(f'  set AZURE_CU_API_KEY={creds["api_key"]}')
-            elif save_method == "config":
-                config_path = Path("configs/default.yaml")
-                if config_path.exists():
-                    content = config_path.read_text(encoding="utf-8")
-                    # Replace placeholders
-                    content = content.replace(
-                        'endpoint: ""', f'endpoint: "{creds["endpoint"]}"'
-                    )
-                    content = content.replace(
-                        'api_key: ""', f'api_key: "{creds["api_key"]}"'
-                    )
-                    config_path.write_text(content, encoding="utf-8")
-                    typer.secho(
-                        f"  ✓ Credentials saved to {config_path}",
-                        fg=typer.colors.GREEN,
-                    )
+    if install_sdk:
+        typer.echo("\nStep 2: Installing Foundry Local Python SDK...")
+        if _run(["pip", "install", "foundry-local-sdk-winml"]):
+            typer.secho("  ✓ Installed foundry-local-sdk-winml", fg=typer.colors.GREEN)
         else:
             typer.secho(
-                "  Skipped (you can configure later)",
-                fg=typer.colors.YELLOW,
+                "  ✗ SDK install failed. Run manually: pip install foundry-local-sdk-winml",
+                fg=typer.colors.RED,
             )
 
-    typer.echo("\nStep 3: Next steps:")
-    typer.echo("  1. Set your schema in schemas/output_schema.example.json")
-    typer.echo("  2. Run: python -m doc_extract_agentic.scripts.setup_cu_analyzer \\")
-    typer.echo("           --schema ./schemas/output_schema.example.json \\")
-    typer.echo("           --config ./configs/default.yaml")
-    typer.echo("  3. Enable CU: set 'enabled: true' in config")
-    typer.echo("  4. Run extraction: doc-extract-run ...")
+    if pull_model:
+        typer.echo("\nStep 3: Warming Foundry Local model...")
+        _warm_model_with_sdk(model_alias=model_alias, app_name="doc-extract-agentic")
 
-    typer.secho("\n✓ Setup complete!", fg=typer.colors.GREEN, bold=True)
+    if write_examples_file:
+        typer.echo("\nStep 4: Preparing example store...")
+        examples_path = Path("examples/training_examples.jsonl")
+        examples_path.parent.mkdir(parents=True, exist_ok=True)
+        if not examples_path.exists():
+            examples_path.write_text("", encoding="utf-8")
+            typer.secho(f"  ✓ Created {examples_path}", fg=typer.colors.GREEN)
+        else:
+            typer.secho(f"  ✓ Exists: {examples_path}", fg=typer.colors.GREEN)
+
+    typer.echo("\nNext steps:")
+    typer.echo(
+        "  1. Confirm local_llm.provider is 'foundry_local_sdk' in configs/default.yaml"
+    )
+    typer.echo("  2. Add labeled examples to examples/training_examples.jsonl")
+    typer.echo("  3. Run doc-extract-auto-iterate with --ground-truth")
+
+    typer.secho("\n✓ Setup complete", fg=typer.colors.GREEN, bold=True)
 
 
 if __name__ == "__main__":

@@ -2,198 +2,72 @@
 
 ## 0) Drop-In Usage Pattern
 
-This starter is designed for folder-based processing:
+This repository is designed for folder-based processing with local self-improvement:
 
-1. Place source files in any input folder (single file or nested folders)
-2. Point `--input-dir` to that folder
-3. Point `--output-dir` to a new run folder
-4. Rerun with updated config/schema using a new output folder
+1. Place source files in an input folder (nested folders supported)
+2. Run extraction to a new output folder
+3. Evaluate against golden labels
+4. Iterate with the autonomous loop
 
-Example:
+## 1) Define the Target Schema
 
-```bash
-doc-extract-run --input-dir ./input_data/batch_001 --output-dir ./output_data/run_001 --schema ./schemas/output_schema.example.json --config ./configs/default.yaml
-analyze-data --input-dir ./input_data/batch_001 --run-dir ./output_data/run_001
+Edit schemas/output_schema.example.json:
+- add fields you need in output
+- add aliases for label/header variants
+- mark required fields
 
-# Iterate
-doc-extract-run --input-dir ./input_data/batch_001 --output-dir ./output_data/run_002 --schema ./schemas/output_schema.example.json --config ./configs/default.yaml
-analyze-data --input-dir ./input_data/batch_001 --run-dir ./output_data/run_002
-```
+## 2) Keep PDF Parsing Enabled
 
-## 1) Define Your Output Schema
+PDF extraction is part of the active runtime path through pdf_native. Keep these in place:
+- src/doc_extract_agentic/extractors/pdf_native.py
+- pypdf dependency in pyproject.toml
 
-Edit `schemas/output_schema.example.json`:
-- add all output fields you care about
-- include aliases for each field from expected document labels
-- mark optional vs required
+PDF files are routed by planner and executed by the extractor registry.
 
-## 2) Tune Config
+## 3) Tune Local Extraction Settings
 
-Edit `configs/default.yaml`:
-- `confidence_threshold`
-- `field_aliases`
-- Azure CU flags (`enabled`, `mode`)
-- Azure CU endpoint and API key (if using)
+Edit configs/default.yaml:
+- pipeline.confidence_threshold
+- pipeline.deterministic_fallback_enabled
+- llm_extractor.max_examples
+- llm_extractor.retrieval_mode (lexical, semantic, hybrid)
+- auto_learning.* gates for promotion safety
 
-## 3) Enable Azure Content Understanding (Optional)
+## 4) Bootstrap Golden Data for Learning
 
-If you want to use Azure CU as a fallback or assistive extractor:
+Use the bootstrap command to ingest labeled examples into the example store:
 
-1. Create an Azure Document Intelligence resource
-2. Run: `python -m doc_extract_agentic.scripts.setup_cu_analyzer --schema ./schemas/output_schema.example.json --config ./configs/default.yaml`
-3. Validate: `python -m doc_extract_agentic.scripts.test_cu_config --config ./configs/default.yaml`
-4. Set `enabled: true` in config
+doc-extract-bootstrap-examples --input-dir ./input --labels-xlsx ./output/extract-test-output.xlsx --schema ./schemas/extract-test-output.schema.json --output-store ./examples/training_examples.jsonl --validation-ratio 0.1 --holdout-ratio 0.1
 
-See [docs/azure-cu-setup.md](azure-cu-setup.md) for detailed setup.
+This creates split-aware examples for train, validation, and holdout evaluation.
 
-## 4) Leverage the Feedback Loop for Continuous Improvement
+## 5) Run Autonomous Improvement
 
-The system automatically analyzes where extractors succeed/fail and suggests improvements:
+Run split-aware autonomous iteration:
 
-```bash
-# After extraction, analyze performance
-analyze-cu --run-dir ./output_data/run_001 --schema ./schemas/output_schema.example.json --config ./configs/default.yaml
+doc-extract-auto-iterate --input-dir ./input --schema ./schemas/extract-test-output.schema.json --config ./configs/default.yaml --output-dir ./output/auto_iterate --ground-truth ./output/extract-test-output.xlsx --max-iterations 6 --target-accuracy 0.97
 
-# Apply improvements and rerun
-improve-cu --previous-run ./output_data/run_001 --input-dir ./input_data/batch_001 --schema ./schemas/output_schema.example.json --config ./configs/default.yaml --new-run ./output_data/run_002
+Behavior:
+- proposes alias updates from failures
+- validates updates against validation split
+- blocks promotion on configured field regressions
+- tracks holdout accuracy
+- auto-promotes validated train rows to example store
 
-# Compare results to measure improvement
-analyze-cu --run-dir ./output_data/run_002 --schema ./schemas/output_schema.example.json --config ./configs/default.yaml
-```
+## 6) Strengthen Reconciliation
 
-See [docs/data-first-extraction.md](data-first-extraction.md) for generic iteration patterns.
+If needed, customize src/doc_extract_agentic/reconciler.py for:
+- per-field weighting
+- cross-field validation
+- source precedence between extractors
 
-## 5) Improve Extractors
+## 7) Add New Extractors
 
-Start with:
-- `extractors/excel_native.py`
-- `extractors/pdf_native.py`
+Add new extractors under src/doc_extract_agentic/extractors and register in src/doc_extract_agentic/extractors/registry.py.
 
-Add domain logic for:
-- multi-sheet table detection
-- section-specific parsing
-- regex/normalization rules for dates/currency/IDs
-
-Example: detecting section-specific patterns in PDFs
-```python
-def extract(self, file_path, schema, config):
-    candidates = []
-    reader = PdfReader(str(file_path))
-    
-    for page in reader.pages:
-        text = page.extract_text()
-        # Look for a domain-specific section header
-        if "SECTION_HEADER" in text.upper():
-            # Parse section-specific fields
-            ...
-    return candidates
-```
-
-## 6) Customize Azure Content Understanding Extraction
-
-Edit `src/doc_extract_agentic/cu_client.py` to:
-- Add custom field matching logic (regex, fuzzy matching, semantic similarity)
-- Adjust confidence scores per field type
-- Handle domain-specific extraction rules
-
-Example: custom confidence scoring
-```python
-def analyze_document(self, file_path, schema, field_aliases):
-    candidates = []
-    # ... extract key-value pairs ...
-    
-    for kv in result.key_value_pairs:
-        key_text = kv.key.content.lower()
-        value_text = kv.value.content
-        
-        # Higher confidence for exact matches
-        if key_text in field_aliases["document_id"]:
-            confidence = 0.95
-        else:
-            confidence = 0.70
-            
-        candidates.append(ExtractionCandidate(
-            field_name="document_id",
-            value=value_text,
-            confidence=confidence,
-            extractor="azure_cu",
-            source_ref=f"{file_path.name}:kv_pair"
-        ))
-    
-    return candidates
-```
-
-## 7) Strengthen Reconciliation
-
-Update `reconciler.py` to include:
-- per-field scoring weights
-- cross-field validations (e.g., date must be before today)
-- source precedence rules (prefer Excel over CU)
-
-Example: cross-field validation
-```python
-def reconcile_candidates(candidates, schema, config):
-    results = []
-    
-    for field in schema.fields:
-        best = select_best_candidate(candidates, field.name)
-        
-        # Validate: if field is date, ensure it's in correct format
-        if field.field_type == "date" and best:
-            try:
-                parse_date(best.value)
-            except:
-                best.confidence *= 0.5  # penalize invalid dates
-        
-        results.append(best)
-    
-    return results
-```
-
-## 8) Learning and Evaluation
-
-Use generated artifacts:
-- `learning_events.jsonl` for policy learning
-- `discrepancies.csv` for error-focused retraining
-- `audit_summary.json` for quality trends
-
-Example: analyze discrepancies
-```bash
-# Find most common extraction errors
-grep '"actual"' runs/*/discrepancies.csv | sort | uniq -c | sort -rn
-```
-
-## 9) Add More Extractors
-
-Create a new extractor for specialized formats:
-
-```python
-# src/doc_extract_agentic/extractors/custom_format.py
-from .base import BaseExtractor
-
-class CustomFormatExtractor(BaseExtractor):
-    name = "custom_format"
-    
-    def extract(self, file_path, schema, config):
-        candidates = []
-        # Your custom extraction logic
-        return candidates
-```
-
-Then register it in `extractors/registry.py`:
-```python
-from .custom_format import CustomFormatExtractor
-
-def build_registry():
-    extractors = [
-        ExcelNativeExtractor(),
-        PdfNativeExtractor(),
-        AzureContentUnderstandingExtractor(),
-        CustomFormatExtractor(),  # Add here
-    ]
-    return {x.name: x for x in extractors}
-```
-
-## 10) Deploy as Service (Next)
-
-Wrap CLI in a lightweight API (FastAPI) for on-demand runs and integrate a job queue if volume grows.
+For any new extractor, ensure it emits:
+- field_name
+- value
+- confidence
+- extractor
+- source_ref

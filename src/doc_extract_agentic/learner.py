@@ -52,6 +52,7 @@ def append_learning_event(
             for c in candidates
         ]
 
+    output_dir.mkdir(parents=True, exist_ok=True)
     with (output_dir / "learning_events.jsonl").open("a", encoding="utf-8") as f:
         f.write(json.dumps(event) + "\n")
 
@@ -66,8 +67,8 @@ def append_extractor_metrics(
 
     Example metrics:
     {
-        "excel_native": {"fields_found": 3, "avg_confidence": 0.92},
-        "azure_cu": {"fields_found": 1, "avg_confidence": 0.65},
+        "llm_native": {"fields_found": 7, "avg_confidence": 0.96},
+        "excel_native": {"fields_found": 2, "avg_confidence": 0.65},
     }
     """
     metric_record = {
@@ -75,5 +76,6 @@ def append_extractor_metrics(
         "metrics": metrics,
     }
 
+    output_dir.mkdir(parents=True, exist_ok=True)
     with (output_dir / "extractor_metrics.jsonl").open("a", encoding="utf-8") as f:
         f.write(json.dumps(metric_record) + "\n")

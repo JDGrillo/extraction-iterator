@@ -31,7 +31,9 @@ doc-extract-auto-iterate \
   --input-dir ./input_data/batch_001 \
   --schema ./schemas/output_schema.example.json \
   --output-dir ./output_data/auto_iterate \
-  --target-success-rate 0.90 \
+  --config ./configs/default.yaml \
+  --ground-truth ./output_data/golden_labels.xlsx \
+  --target-accuracy 0.90 \
   --max-iterations 10
 ```
 
@@ -40,7 +42,7 @@ The system will automatically:
 - Identify failing fields and propose aliases
 - Apply approved aliases to schema
 - Rerun extraction with updated schema
-- Measure improvement and decide whether to continue
+- Measure validation and holdout improvement and decide whether to continue
 - Stop when target is reached or improvement plateaus
 
 Output: `iteration_report.json` shows complete iteration history and final metrics.
@@ -48,7 +50,7 @@ Output: `iteration_report.json` shows complete iteration history and final metri
 **When to use autonomous iteration:**
 - You have a clear target success rate in mind
 - You want to avoid manual parameter tuning
-- You have LLM suggestions enabled for field discovery
+- You have golden labels for evaluation
 - You want a simple one-command workflow
 
 **When to use manual iteration:**
@@ -59,13 +61,6 @@ Output: `iteration_report.json` shows complete iteration history and final metri
 
 ## Commands
 
-Pattern discovery and strategy analysis:
-
-```bash
-analyze-data --input-dir ./input_data/batch_001
-analyze-data --input-dir ./input_data/batch_001 --run-dir ./output_data/run_001
-```
-
 Extraction run:
 
 ```bash
@@ -74,6 +69,16 @@ doc-extract-run \
   --output-dir ./output_data/run_001 \
   --schema ./schemas/output_schema.example.json \
   --config ./configs/default.yaml
+```
+
+Bootstrap labeled examples into the training store:
+
+```bash
+doc-extract-bootstrap-examples \
+  --input-dir ./input_data/batch_001 \
+  --labels-xlsx ./output_data/golden_labels.xlsx \
+  --schema ./schemas/output_schema.example.json \
+  --output-store ./examples/training_examples.jsonl
 ```
 
 ## What to Improve Between Runs
@@ -93,18 +98,10 @@ doc-extract-run \
 
 ## Optional Components
 
-### Azure Content Understanding
+### PDF Extraction
 
-Enable `azure_content_understanding` in [configs/default.yaml](../configs/default.yaml) to add CU as an optional extractor.
+PDF parsing is part of the default extractor set and remains enabled through pdf_native.
 
-### LLM Improvement Suggestions
+### Local LLM Suggestions
 
-Enable `llm_improvement` in [configs/default.yaml](../configs/default.yaml) for optional LLM-generated tuning suggestions.
-
-If unavailable, deterministic suggestions remain in place.
-
-For robustness, schema auto-correction is promotion-gated by default:
-
-- run `analyze-data --run-dir ... --schema ...` repeatedly to build evidence
-- check `alias_promotion_report.json` and `alias_promotion_state.json`
-- use `--auto-correct` only to apply aliases that have reached promotion thresholds
+Alias and example improvements are generated locally and promotion-gated by validation performance and field-level regression rules.

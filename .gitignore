@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 .venv/
+venv/
 .env
 
 # Build artifacts
@@ -10,10 +11,28 @@ build/
 dist/
 *.egg-info/
 
-# Run outputs
-runs/
-
 # OS/editor
 .DS_Store
 Thumbs.db
 .vscode/
+
+# ── Run outputs ──────────────────────────────────────────────────────────────
+# All extraction run directories under output/ are excluded.
+# The ground truth reference file and .gitkeep placeholder are tracked.
+output/*/
+!output/.gitkeep
+
+# Input files are local/sensitive — exclude all except placeholder.
+input/*
+!input/.gitkeep
+
+# Rule cache is runtime state, not source — exclude entirely.
+.cache/
+
+# ── What IS committed ────────────────────────────────────────────────────────
+# src/          - all pipeline + extractor logic improvements
+# configs/      - default.yaml and any named config variants
+# schemas/      - schema definitions
+# examples/     - training_examples.jsonl (few-shot examples for LLM)
+# docs/         - architecture and customization guides
+# pyproject.toml, README.md

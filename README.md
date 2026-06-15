@@ -1,130 +1,112 @@
-# Agentic Document Extraction Starter (Python)
+# Foundry Local Autonomous Extraction
 
-A generic starter template for building data extraction workflows over Excel and PDF documents.
+This repository runs an offline extraction workflow for messy Excel files using a local LLM (Phi-4 via Foundry Local) plus deterministic evaluation gates.
 
-## What This Starter Provides
+## What It Does
 
-- A modular extraction pipeline with pluggable extractors
-- A reconciliation step to map candidates into one output schema
-- Audit artifacts for quality checks and troubleshooting
-- Optional add-ons for Azure Content Understanding and LLM-assisted suggestions
-
-## Core Workflow
-
-1. Define your output schema in [schemas/output_schema.example.json](schemas/output_schema.example.json)
-2. Configure behavior in [configs/default.yaml](configs/default.yaml)
-3. Run extraction over an input folder
-4. Review output and audit artifacts
-5. Iterate on aliases, extractor logic, and thresholds
+- Uses a local LLM extractor (`llm_native`) as primary strategy for Excel files.
+- Supports deterministic fallback (`excel_native`) when enabled.
+- Scores every run against ground truth spreadsheets.
+- Iteratively proposes alias updates using the local LLM.
+- Promotes updates only when validation improves accuracy and does not regress.
+- Uses split-aware scoring (train/validation/holdout) when the example store includes split metadata.
+- Auto-promotes validated training examples back into the example store for continuous improvement.
 
 ## Quick Start
 
-Drop your documents into an input folder and point the pipeline at an output folder.
-
-Example folder layout:
-
-```text
-./input_data/
-  batch_001/
-    file1.pdf
-    file2.xlsx
-./output_data/
-```
-
-```bash
+```powershell
 python -m venv .venv
-.venv\Scripts\activate
-pip install -e .
-
-doc-extract-run \
-  --input-dir ./input_data/batch_001 \
-  --output-dir ./output_data/run_001 \
-  --schema ./schemas/output_schema.example.json \
-  --config ./configs/default.yaml
+.\.venv\Scripts\activate
+pip install -e .[foundry]
 ```
 
-Optional data profiling and strategy analysis:
+Install Foundry Local CLI and warm the model:
 
-```bash
-analyze-data --input-dir ./input_data/batch_001 --run-dir ./output_data/run_001
+```powershell
+winget install Microsoft.FoundryLocal
+setup-env --model-alias phi-4
 ```
 
-Run iterative passes by writing each pass to a new output folder:
+Run one extraction pass:
 
-```bash
-doc-extract-run --input-dir ./input_data/batch_001 --output-dir ./output_data/run_002 --schema ./schemas/output_schema.example.json --config ./configs/default.yaml
-analyze-data --input-dir ./input_data/batch_001 --run-dir ./output_data/run_002
+```powershell
+doc-extract-run `
+  --input-dir .\input `
+  --output-dir .\output\run_001 `
+  --schema .\schemas\extract-test-output.schema.json `
+  --config .\configs\default.yaml `
+  --ground-truth .\output\extract-test-output.xlsx
 ```
 
-### Autonomous Iteration (Recommended)
+Bootstrap golden labels into example store (recommended first step for large datasets):
 
-Let the system iterate automatically until success criteria are met:
-
-```bash
-doc-extract-auto-iterate \
-  --input-dir ./input_data/batch_001 \
-  --schema ./schemas/output_schema.example.json \
-  --output-dir ./output_data/auto_iterate \
-  --target-success-rate 0.90 \
-  --max-iterations 10
+```powershell
+doc-extract-bootstrap-examples `
+  --input-dir .\input `
+  --labels-xlsx .\output\extract-test-output.xlsx `
+  --schema .\schemas\extract-test-output.schema.json `
+  --output-store .\examples\training_examples.jsonl `
+  --validation-ratio 0.1 `
+  --holdout-ratio 0.1
 ```
 
-The system will:
-1. Run extraction (iter_01)
-2. Analyze performance and identify weak fields
-3. Propose missing aliases from document labels
-4. Apply approved aliases to schema
-5. Rerun extraction (iter_02)
-6. Compare results; repeat if improvement continues
-7. Stop when target is reached or plateau is detected
+Run autonomous iteration loop:
 
-Output: `iteration_report.json` with full history and summary.
+```powershell
+doc-extract-auto-iterate `
+  --input-dir .\input `
+  --schema .\schemas\extract-test-output.schema.json `
+  --config .\configs\default.yaml `
+  --output-dir .\output\autonomous_run `
+  --ground-truth .\output\extract-test-output.xlsx `
+  --max-iterations 6 `
+  --target-accuracy 0.97
+```
 
-## CLI Commands
+## Example Store
 
-| Command | Purpose |
-|---------|---------|
-| `doc-extract-run` | Run extraction pipeline |
-| `doc-extract-auto-iterate` | Autonomous improvement loop: extract → analyze → improve → repeat until success |
-| `analyze-data` | Analyze data patterns and extractor performance |
-| `setup-cu-analyzer` | Generate Azure CU analyzer config |
-| `test-cu-config` | Validate Azure CU configuration |
-| `analyze-cu` | Analyze CU-specific performance |
-| `improve-cu` | Apply CU-focused improvement cycle |
+Few-shot examples are read from:
 
-## Optional Components
+- `examples/training_examples.jsonl`
 
-### Azure Content Understanding
+Each JSONL record should look like:
 
-Optional and disabled by default. Enable under `azure_content_understanding` in [configs/default.yaml](configs/default.yaml).
-
-### LLM Improvement Suggestions
-
-Optional and disabled by default. Enable under `llm_improvement` in [configs/default.yaml](configs/default.yaml).
-
-If unavailable or misconfigured, the pipeline continues with deterministic behavior.
-
-When enabled, alias auto-correction is promotion-gated by default:
-
-- suggestions are tracked in `alias_promotion_state.json` across analysis runs
-- aliases are applied only after repeated confirmation (see `llm_improvement.alias_promotion`)
-- review `alias_promotion_report.json` before enabling `--auto-correct` in shared environments
+```json
+{
+  "source_file": "example.xlsx",
+  "sheet_markdown": "Workbook: ...",
+  "quality_score": 1.0,
+  "split": "train",
+  "output": {
+    "location_name": "Main Plant",
+    "city": "Denver"
+  }
+}
+```
 
 ## Output Artifacts
 
-Typical run outputs in your run directory:
+Per run directory:
 
 - `extracted_output.xlsx`
-- `audit_summary.json`
 - `run_trace.json`
 - `learning_events.jsonl`
-- `discrepancies.csv` (when ground truth is provided)
+- `audit_summary.json`
+- `discrepancies.csv` (if ground truth supplied)
+- `evaluation_report.json` (iteration loop)
 
-These are written to whatever folder you pass with `--output-dir`, so you can keep one folder per run/batch.
+Top-level iteration directory:
 
-## Documentation
+- `working_schema.json`
+- `staging_schema.json`
+- `final_schema.json`
+- `iteration_report.json`
 
-- [docs/architecture.md](docs/architecture.md)
-- [docs/customization-guide.md](docs/customization-guide.md)
-- [docs/data-first-extraction.md](docs/data-first-extraction.md)
-- [docs/azure-cu-setup.md](docs/azure-cu-setup.md)
+## Self-Improvement Behavior
+
+- Use `doc-extract-bootstrap-examples` to ingest your labeled corpus into `examples/training_examples.jsonl`.
+- The LLM extractor retrieves examples using `llm_extractor.retrieval_mode` (`lexical`, `semantic`, or `hybrid`).
+- Autonomous iteration evaluates candidate and staged schema updates on validation split by default.
+- Field-level regression gates can block promotion if configured under `auto_learning.field_promotion`.
+- Holdout accuracy is tracked in `iteration_report.json` for overfitting detection.
+- When alias updates are promoted, validated training rows can be auto-promoted into the example store.
