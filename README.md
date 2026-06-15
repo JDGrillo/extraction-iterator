@@ -1,16 +1,12 @@
-# Foundry Local Autonomous Extraction
+# Foundry Local Document Extraction
 
-This repository runs an offline extraction workflow for messy Excel files using a local LLM (Phi-4 via Foundry Local) plus deterministic evaluation gates.
+This repository runs offline extraction for messy Excel files using a local LLM (Phi-4 via Foundry Local) with deterministic fallback and learning loops.
 
-## What It Does
+## Primary Workflows
 
-- Uses a local LLM extractor (`llm_native`) as primary strategy for Excel files.
-- Supports deterministic fallback (`excel_native`) when enabled.
-- Scores every run against ground truth spreadsheets.
-- Iteratively proposes alias updates using the local LLM.
-- Promotes updates only when validation improves accuracy and does not regress.
-- Uses split-aware scoring (train/validation/holdout) when the example store includes split metadata.
-- Auto-promotes validated training examples back into the example store for continuous improvement.
+- `doc-extract-run`: run extraction on a folder of input files and write normalized output artifacts.
+- `doc-extract-learn`: run iterative learning against a golden dataset and cache learned rules for reuse.
+- Uses `llm_native` as primary strategy and `excel_native` deterministic extraction for robustness.
 
 ## Quick Start
 
@@ -27,7 +23,7 @@ winget install Microsoft.FoundryLocal
 setup-env --model-alias phi-4
 ```
 
-Run one extraction pass:
+Run extraction (inference):
 
 ```powershell
 doc-extract-run `
@@ -38,30 +34,28 @@ doc-extract-run `
   --ground-truth .\output\extract-test-output.xlsx
 ```
 
-Bootstrap golden labels into example store (recommended first step for large datasets):
+Run learning (with ground truth):
 
 ```powershell
-doc-extract-bootstrap-examples `
-  --input-dir .\input `
-  --labels-xlsx .\output\extract-test-output.xlsx `
-  --schema .\schemas\extract-test-output.schema.json `
-  --output-store .\examples\training_examples.jsonl `
-  --validation-ratio 0.1 `
-  --holdout-ratio 0.1
-```
-
-Run autonomous iteration loop:
-
-```powershell
-doc-extract-auto-iterate `
-  --input-dir .\input `
+doc-extract-learn `
+  --input-file .\input\extract-test-input.xlsx `
+  --ground-truth .\output\extract-test-output.xlsx `
   --schema .\schemas\extract-test-output.schema.json `
   --config .\configs\default.yaml `
-  --output-dir .\output\autonomous_run `
-  --ground-truth .\output\extract-test-output.xlsx `
-  --max-iterations 6 `
-  --target-accuracy 0.97
+  --output-dir .\output\learn_001 `
+  --max-iterations 6
 ```
+
+## Commands
+
+- `doc-extract-run`
+  - Input: directory of Excel files
+  - Output: extraction artifacts (`extracted_output.xlsx`, traces, audit files)
+  - Ground truth is optional; when provided, discrepancy reports are produced.
+- `doc-extract-learn`
+  - Input: one source Excel file + one golden Excel file
+  - Output: `learning_result.json`, `learned_rules.json`, extracted final xlsx/csv
+  - Supports rule caching (`.cache/rules`) to improve future runs with the same schema.
 
 ## Example Store
 
@@ -86,27 +80,29 @@ Each JSONL record should look like:
 
 ## Output Artifacts
 
-Per run directory:
+`doc-extract-run` output directory:
 
 - `extracted_output.xlsx`
 - `run_trace.json`
 - `learning_events.jsonl`
 - `audit_summary.json`
 - `discrepancies.csv` (if ground truth supplied)
-- `evaluation_report.json` (iteration loop)
 
-Top-level iteration directory:
+`doc-extract-learn` output directory:
 
-- `working_schema.json`
-- `staging_schema.json`
-- `final_schema.json`
-- `iteration_report.json`
+- `learning_result.json`
+- `learned_rules.json`
+- `extracted_final.xlsx`
+- `extracted_final.csv`
 
-## Self-Improvement Behavior
+## Learning Behavior
 
-- Use `doc-extract-bootstrap-examples` to ingest your labeled corpus into `examples/training_examples.jsonl`.
-- The LLM extractor retrieves examples using `llm_extractor.retrieval_mode` (`lexical`, `semantic`, or `hybrid`).
-- Autonomous iteration evaluates candidate and staged schema updates on validation split by default.
-- Field-level regression gates can block promotion if configured under `auto_learning.field_promotion`.
-- Holdout accuracy is tracked in `iteration_report.json` for overfitting detection.
-- When alias updates are promoted, validated training rows can be auto-promoted into the example store.
+- `doc-extract-learn` iteratively compares extracted rows to golden rows, learns transformation rules, and reapplies them.
+- Learned rules are persisted in `.cache/rules` and can be reused for future documents with compatible schema.
+- Final extracted rows are filtered to keep meaningful data rows (requires at least two populated fields).
+- The LLM extractor can use retrieval from `examples/training_examples.jsonl` (`lexical`, `semantic`, or `hybrid`).
+
+## Legacy / Optional Tools
+
+- `doc-extract-auto-iterate` and `doc-extract-bootstrap-examples` remain available for advanced experimentation.
+- The recommended day-to-day path is `doc-extract-run` for extraction and `doc-extract-learn` for iterative improvement.

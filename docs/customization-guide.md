@@ -2,12 +2,12 @@
 
 ## 0) Drop-In Usage Pattern
 
-This repository is designed for folder-based processing with local self-improvement:
+This repository is designed around two primary workflows:
 
 1. Place source files in an input folder (nested folders supported)
-2. Run extraction to a new output folder
-3. Evaluate against golden labels
-4. Iterate with the autonomous loop
+2. Run extraction with `doc-extract-run`
+3. Improve extraction behavior with `doc-extract-learn` using a golden file
+4. Re-run `doc-extract-run` on new documents using cached learning
 
 ## 1) Define the Target Schema
 
@@ -31,37 +31,48 @@ Edit configs/default.yaml:
 - pipeline.deterministic_fallback_enabled
 - llm_extractor.max_examples
 - llm_extractor.retrieval_mode (lexical, semantic, hybrid)
-- auto_learning.* gates for promotion safety
+- local_llm.* model/runtime settings
+- auto_learning.* settings used by optional advanced workflows
 
-## 4) Bootstrap Golden Data for Learning
+## 4) Primary Command: Run Extraction
 
-Use the bootstrap command to ingest labeled examples into the example store:
+Use this for day-to-day extraction over folders:
 
-doc-extract-bootstrap-examples --input-dir ./input --labels-xlsx ./output/extract-test-output.xlsx --schema ./schemas/extract-test-output.schema.json --output-store ./examples/training_examples.jsonl --validation-ratio 0.1 --holdout-ratio 0.1
+doc-extract-run --input-dir ./input --output-dir ./output/run_001 --schema ./schemas/extract-test-output.schema.json --config ./configs/default.yaml
 
-This creates split-aware examples for train, validation, and holdout evaluation.
+Optional: include `--ground-truth` to emit discrepancy reports for scoring.
 
-## 5) Run Autonomous Improvement
+## 5) Primary Command: Learn Rules
 
-Run split-aware autonomous iteration:
+Use this to iteratively learn rules from one source file + one golden output file:
 
-doc-extract-auto-iterate --input-dir ./input --schema ./schemas/extract-test-output.schema.json --config ./configs/default.yaml --output-dir ./output/auto_iterate --ground-truth ./output/extract-test-output.xlsx --max-iterations 6 --target-accuracy 0.97
+doc-extract-learn --input-file ./input/extract-test-input.xlsx --ground-truth ./output/extract-test-output.xlsx --schema ./schemas/extract-test-output.schema.json --config ./configs/default.yaml --output-dir ./output/learn_001 --max-iterations 6
 
 Behavior:
-- proposes alias updates from failures
-- validates updates against validation split
-- blocks promotion on configured field regressions
-- tracks holdout accuracy
-- auto-promotes validated train rows to example store
+- aligns extracted rows to golden rows
+- learns transformation rules from discrepancies
+- reapplies rules across iterations
+- persists learned rules under `.cache/rules` for reuse
 
-## 6) Strengthen Reconciliation
+Learn output includes `learning_result.json`, `learned_rules.json`, `extracted_final.xlsx`, and `extracted_final.csv`.
+
+## 6) Optional Advanced Workflow
+
+If you need split-aware validation/holdout gating and staged schema promotion, optional commands remain available:
+
+- `doc-extract-bootstrap-examples`
+- `doc-extract-auto-iterate`
+
+These are useful for experimentation and evaluation-heavy tuning, but are not required for the default run/learn flow.
+
+## 7) Strengthen Reconciliation
 
 If needed, customize src/doc_extract_agentic/reconciler.py for:
 - per-field weighting
 - cross-field validation
 - source precedence between extractors
 
-## 7) Add New Extractors
+## 8) Add New Extractors
 
 Add new extractors under src/doc_extract_agentic/extractors and register in src/doc_extract_agentic/extractors/registry.py.
 
