@@ -16,12 +16,15 @@ python -m venv .venv
 pip install -e .[foundry]
 ```
 
-Install Foundry Local CLI and warm the model:
+Warm the model with the GA Python package path:
 
 ```powershell
-winget install Microsoft.FoundryLocal
-setup-env --model-alias phi-4
+setup-env --model-alias phi-4-mini
 ```
+
+If you use the OpenAI-compatible REST endpoint (`local_llm.provider: openai_compatible`),
+install/start the Foundry Local CLI separately. For the default SDK mode
+(`local_llm.provider: foundry_local_sdk`), CLI setup is not required by this project.
 
 Run extraction (inference):
 

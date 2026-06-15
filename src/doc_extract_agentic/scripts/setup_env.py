@@ -19,6 +19,15 @@ def _run(cmd: list[str]) -> bool:
         return False
 
 
+def _sdk_is_available() -> bool:
+    try:
+        import foundry_local_sdk  # noqa: F401
+
+        return True
+    except ModuleNotFoundError:
+        return False
+
+
 def _warm_model_with_sdk(model_alias: str, app_name: str) -> bool:
     try:
         from foundry_local_sdk import Configuration, FoundryLocalManager
@@ -70,7 +79,7 @@ def setup_env(
         True,
         help="Download/warm model alias via Foundry Local SDK",
     ),
-    model_alias: str = typer.Option("phi-4", help="Foundry Local model alias"),
+    model_alias: str = typer.Option("phi-4-mini", help="Foundry Local model alias"),
     write_examples_file: bool = typer.Option(
         True,
         help="Create empty example store file if missing",
@@ -82,15 +91,14 @@ def setup_env(
         bold=True,
     )
 
-    typer.echo("Step 1: Checking Foundry Local CLI...")
-    if _run(["foundry", "--version"]):
-        typer.secho("  ✓ Foundry Local CLI detected", fg=typer.colors.GREEN)
+    typer.echo("Step 1: Checking Foundry Local Python SDK...")
+    if _sdk_is_available():
+        typer.secho("  ✓ Foundry Local Python SDK detected", fg=typer.colors.GREEN)
     else:
         typer.secho(
-            "  ✗ Foundry Local CLI not found. Install with: winget install Microsoft.FoundryLocal",
-            fg=typer.colors.RED,
+            "  ! Foundry Local Python SDK not detected yet",
+            fg=typer.colors.YELLOW,
         )
-        raise typer.Exit(1)
 
     if install_sdk:
         typer.echo("\nStep 2: Installing Foundry Local Python SDK...")
@@ -101,6 +109,13 @@ def setup_env(
                 "  ✗ SDK install failed. Run manually: pip install foundry-local-sdk-winml",
                 fg=typer.colors.RED,
             )
+
+    if not _sdk_is_available():
+        typer.secho(
+            "  ✗ Foundry Local Python SDK is required. Install with: pip install foundry-local-sdk-winml",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(1)
 
     if pull_model:
         typer.echo("\nStep 3: Warming Foundry Local model...")
