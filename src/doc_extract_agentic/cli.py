@@ -17,6 +17,12 @@ def app_run(
     schema: Path = typer.Option(..., exists=True, dir_okay=False),
     config: Path = typer.Option(..., exists=True, dir_okay=False),
     ground_truth: Path | None = typer.Option(None, exists=True, dir_okay=False),
+    rules_file: Path | None = typer.Option(
+        None,
+        "--rules-file",
+        dir_okay=False,
+        help="Path to learned_rules.json produced by doc-extract-learn",
+    ),
 ) -> None:
     cfg = load_config(config)
     out_schema = load_schema(schema)
@@ -26,6 +32,7 @@ def app_run(
         schema=out_schema,
         config=cfg,
         ground_truth=ground_truth,
+        rules_file=rules_file,
     )
     typer.echo(f"Run complete: {result['run_id']}")
     typer.echo(f"Output: {result['output_path']}")

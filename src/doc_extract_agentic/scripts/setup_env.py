@@ -45,18 +45,31 @@ def _warm_model_with_sdk(model_alias: str, app_name: str) -> bool:
             )
             return False
 
-        is_cached = True
-        if hasattr(model, "is_cached"):
-            try:
-                is_cached = bool(model.is_cached())
-            except Exception:  # pylint: disable=broad-exception-caught
-                is_cached = True
+        # `is_cached` and `is_loaded` are properties on the SDK Model object,
+        # not methods. Read them as attributes.
+        is_cached = bool(getattr(model, "is_cached", False))
 
         if not is_cached and hasattr(model, "download"):
-            typer.echo(f"  Downloading model alias: {model_alias}")
-            model.download(lambda _pct: None)
+            typer.echo(
+                f"  Downloading model alias: {model_alias} (id: {getattr(model, 'id', '?')})"
+            )
 
-        if hasattr(model, "load"):
+            last_reported = {"pct": -1}
+
+            def _on_progress(pct: float) -> None:
+                # Foundry SDK invokes this with a 0..100 float. Report coarse
+                # milestones (every 25%) at most once each to avoid spam.
+                try:
+                    bucket = int(pct) // 25 * 25
+                except Exception:  # pylint: disable=broad-exception-caught
+                    return
+                if bucket != last_reported["pct"]:
+                    last_reported["pct"] = bucket
+                    typer.echo(f"    ...{bucket}%")
+
+            model.download(_on_progress)
+
+        if hasattr(model, "load") and not bool(getattr(model, "is_loaded", False)):
             model.load()
 
         typer.secho(

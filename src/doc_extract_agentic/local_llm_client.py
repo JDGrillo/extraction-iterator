@@ -33,8 +33,16 @@ class LocalLLMClient:
         self.cfg = cfg
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> "LocalLLMClient":
+    def from_config(
+        cls,
+        config: dict[str, Any],
+        profile: str | None = None,
+    ) -> "LocalLLMClient":
         llm_cfg = config.get("local_llm", {})
+        if profile:
+            profile_cfg = config.get("local_llm_profiles", {}).get(profile, {})
+            if isinstance(profile_cfg, dict):
+                llm_cfg = {**llm_cfg, **profile_cfg}
         cfg = LocalLLMConfig(
             enabled=bool(llm_cfg.get("enabled", True)),
             provider=str(llm_cfg.get("provider", "foundry_local_sdk")),
@@ -183,16 +191,12 @@ class LocalLLMClient:
                 logger.warning("Foundry variant selection fallback failed: %s", exc)
 
             if self.cfg.auto_download_model:
-                is_cached = True
-                if hasattr(model, "is_cached"):
-                    try:
-                        is_cached = bool(model.is_cached())
-                    except Exception:  # pylint: disable=broad-exception-caught
-                        is_cached = True
+                # `is_cached` is a property on the SDK Model, not a method.
+                is_cached = bool(getattr(model, "is_cached", False))
                 if not is_cached and hasattr(model, "download"):
                     model.download(lambda _pct: None)
 
-            if hasattr(model, "load"):
+            if hasattr(model, "load") and not bool(getattr(model, "is_loaded", False)):
                 try:
                     model.load()
                 except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -237,11 +241,11 @@ class LocalLLMClient:
                     with ThreadPoolExecutor(max_workers=1) as pool:
                         future = pool.submit(chat_client.complete_chat, messages)
                         try:
-                            response = future.result(timeout=_SDK_CALL_TIMEOUT_SECONDS)
+                            response = future.result(timeout=self.cfg.timeout_seconds)
                         except FuturesTimeoutError:
                             logger.warning(
                                 "Foundry SDK chat timed out after %ds (attempt %d/%d)",
-                                _SDK_CALL_TIMEOUT_SECONDS,
+                                self.cfg.timeout_seconds,
                                 attempt,
                                 _SDK_MAX_RETRIES,
                             )

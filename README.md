@@ -1,6 +1,15 @@
 # Foundry Local Document Extraction
 
-This repository runs offline extraction for messy Excel files using a local LLM (Phi-4 via Foundry Local) with deterministic fallback and learning loops.
+This repository runs offline extraction for messy Excel files using a local LLM (Phi-4-mini via Foundry Local) with deterministic fallback and learning loops.
+
+## Documentation Map
+
+Documentation is consolidated into the core set below to keep requirements, architecture, and operator guidance in sync.
+
+- Product requirements and scope: `docs/PRD.md`
+- Architecture and run/learn diagrams: `docs/architecture.md`
+- Tuning and extension points: `docs/customization-guide.md`
+- Empirical findings and lessons: `docs/SKILL_repo_findings.md`
 
 ## Primary Workflows
 
@@ -32,7 +41,7 @@ Run extraction (inference):
 doc-extract-run `
   --input-dir .\input `
   --output-dir .\output\run_001 `
-  --schema .\schemas\extract-test-output.schema.json `
+  --schema .\schemas\extract-sov.schema.json `
   --config .\configs\default.yaml `
   --ground-truth .\output\extract-test-output.xlsx
 ```
@@ -43,7 +52,7 @@ Run learning (with ground truth):
 doc-extract-learn `
   --input-file .\input\extract-test-input.xlsx `
   --ground-truth .\output\extract-test-output.xlsx `
-  --schema .\schemas\extract-test-output.schema.json `
+  --schema .\schemas\extract-sov.schema.json `
   --config .\configs\default.yaml `
   --output-dir .\output\learn_001 `
   --max-iterations 6
@@ -104,8 +113,3 @@ Each JSONL record should look like:
 - Learned rules are persisted in `.cache/rules` and can be reused for future documents with compatible schema.
 - Final extracted rows are filtered to keep meaningful data rows (requires at least two populated fields).
 - The LLM extractor can use retrieval from `examples/training_examples.jsonl` (`lexical`, `semantic`, or `hybrid`).
-
-## Legacy / Optional Tools
-
-- `doc-extract-auto-iterate` and `doc-extract-bootstrap-examples` remain available for advanced experimentation.
-- The recommended day-to-day path is `doc-extract-run` for extraction and `doc-extract-learn` for iterative improvement.

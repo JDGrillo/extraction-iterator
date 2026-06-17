@@ -7,7 +7,15 @@
       "required": false,
       "aliases": [
         "location name",
-        "Location Name"
+        "Location Name",
+        "location",
+        "Location",
+        "location no",
+        "Location No",
+        "location number",
+        "Location Number",
+        "loc no",
+        "Loc No"
       ]
     },
     {
@@ -16,7 +24,15 @@
       "required": false,
       "aliases": [
         "occupancy type",
-        "Occupancy Type"
+        "Occupancy Type",
+        "occupancy",
+        "Occupancy",
+        "class",
+        "Class",
+        "description",
+        "Description",
+        "use",
+        "Use"
       ]
     },
     {
@@ -25,7 +41,13 @@
       "required": false,
       "aliases": [
         "street / address text",
-        "Street / Address Text"
+        "Street / Address Text",
+        "street address",
+        "Street Address",
+        "street",
+        "Street",
+        "property address",
+        "Property Address"
       ]
     },
     {
@@ -52,7 +74,11 @@
       "required": false,
       "aliases": [
         "zip",
-        "ZIP"
+        "ZIP",
+        "zip code",
+        "Zip Code",
+        "postal code",
+        "Postal Code"
       ]
     },
     {
@@ -61,7 +87,15 @@
       "required": false,
       "aliases": [
         "building value",
-        "Building Value"
+        "Building Value",
+        "building",
+        "Building",
+        "bldg",
+        "Bldg",
+        "bldg value",
+        "Bldg Value",
+        "building replacement value",
+        "Building Replacement Value"
       ]
     },
     {
@@ -70,7 +104,13 @@
       "required": false,
       "aliases": [
         "contents value",
-        "Contents Value"
+        "Contents Value",
+        "contents",
+        "Contents",
+        "bpp",
+        "BPP",
+        "business personal property",
+        "Business Personal Property"
       ]
     },
     {
@@ -79,7 +119,17 @@
       "required": false,
       "aliases": [
         "equipment value",
-        "Equipment Value"
+        "Equipment Value",
+        "equipment",
+        "Equipment",
+        "machinery",
+        "Machinery",
+        "machinery eq",
+        "Machinery Eq",
+        "machinery and equipment",
+        "Machinery and Equipment",
+        "m and e",
+        "M and E"
       ]
     },
     {
@@ -88,7 +138,13 @@
       "required": false,
       "aliases": [
         "business income value",
-        "Business Income Value"
+        "Business Income Value",
+        "business income",
+        "Business Income",
+        "bus income",
+        "Bus Income",
+        "bi value",
+        "BI Value"
       ]
     },
     {
@@ -99,7 +155,13 @@
         "total insured value",
         "Total Insured Value",
         "TIV",
-        "tiv"
+        "tiv",
+        "total value",
+        "Total Value",
+        "total iv",
+        "Total IV",
+        "total",
+        "Total"
       ]
     }
   ]

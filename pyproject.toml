@@ -24,9 +24,7 @@ foundry = [
 [project.scripts]
 doc-extract-run = "doc_extract_agentic.cli:app"
 setup-env = "doc_extract_agentic.scripts.setup_env:app"
-doc-extract-auto-iterate = "doc_extract_agentic.scripts.auto_iterate:app"
 doc-extract-learn = "doc_extract_agentic.scripts.learn:app"
-doc-extract-bootstrap-examples = "doc_extract_agentic.scripts.bootstrap_examples:app"
 generate-schema-from-xlsx = "doc_extract_agentic.scripts.generate_schema_from_xlsx:app"
 
 [tool.setuptools]

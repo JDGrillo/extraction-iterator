@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import difflib
 import re
@@ -36,13 +36,29 @@ _COMMON_HEADER_TOKENS = {
 _HEADER_SYNONYMS = {
     "community entity": "location_name",
     "community": "location_name",
+    "location name": "location_name",
+    "location occupancy": "occupancy_type",
     "address": "street_address_text",
+    "street address": "street_address_text",
+    "property address": "street_address_text",
     "st": "state",
+    "bldg": "building_value",
+    "bldg value": "building_value",
+    "contents": "contents_value",
+    "equipment": "equipment_value",
+    "contents mach equip": "equipment_value",
+    "contents mach and equip": "equipment_value",
+    "machinery eq": "equipment_value",
+    "business income": "business_income_value",
+    "100 business income 2026": "business_income_value",
+    "bus income": "business_income_value",
     "ap rce building value": "building_value",
     "carrier s quoted building value": "building_value",
     "bus income ee": "business_income_value",
     "business income ee": "business_income_value",
     "total value": "total_insured_value",
+    "2026 total": "total_insured_value",
+    "tiv": "total_insured_value",
 }
 
 
@@ -217,6 +233,9 @@ class ExcelNativeExtractor(BaseExtractor):
                 alias_lookup[normalized] = field.name
                 alias_terms.append(normalized)
 
+        best_rows: list[dict[str, str]] = []
+        best_score = -1.0
+
         for sheet_name, df in sheets.items():
             table_rows = self._extract_all_tabular_rows(
                 file_path=file_path,
@@ -226,7 +245,22 @@ class ExcelNativeExtractor(BaseExtractor):
                 alias_terms=alias_terms,
                 schema_fields=[f.name for f in schema.fields],
             )
-            rows.extend(table_rows)
+            if not table_rows:
+                continue
+
+            # Prefer SOV-like sheets: many rows with total_insured_value populated.
+            tiv_rows = sum(
+                1
+                for r in table_rows
+                if str(r.get("total_insured_value", "")).strip()
+            )
+            score = (tiv_rows * 10.0) + len(table_rows)
+            if score > best_score:
+                best_score = score
+                best_rows = table_rows
+
+        if best_rows:
+            return best_rows
 
         return rows
 
@@ -285,8 +319,21 @@ class ExcelNativeExtractor(BaseExtractor):
                 continue
             field_header_tokens.setdefault(field_name, set()).add(token)
 
+        # Collect columns that didn't match any schema alias so that downstream
+        # column_alias rules (learned and loaded in the pipeline) can remap them.
+        unmatched_cols: dict[int, str] = {}
+        for col_idx in range(len(df.columns)):
+            if col_idx in best_mapping:
+                continue
+            cell = df.iat[best_header_idx, col_idx]
+            if not pd.isna(cell):
+                raw_header = str(cell).strip()
+                if raw_header:
+                    unmatched_cols[col_idx] = raw_header
+
         # Iterate every data row below the header.
         results: list[dict[str, str]] = []
+        mapped_schema_fields = set(best_mapping.values())
         for row_idx in range(best_header_idx + 1, len(df)):
             row_dict: dict[str, str] = {}
             for col_idx, field_name in best_mapping.items():
@@ -296,6 +343,15 @@ class ExcelNativeExtractor(BaseExtractor):
                 if value:
                     row_dict[field_name] = value
 
+            # Preserve unmatched columns by raw header name so column_alias
+            # rules (loaded in the pipeline) can remap them to schema fields.
+            for col_idx, raw_header in unmatched_cols.items():
+                if col_idx >= len(df.columns):
+                    continue
+                value = _clean_value(df.iat[row_idx, col_idx])
+                if value:
+                    row_dict[raw_header] = value
+
             # Require at least 2 populated schema fields to exclude note rows,
             # AND at least one identity field (location name, address, or occupancy)
             # must be present to exclude totals rows and other non-location data.
@@ -304,7 +360,9 @@ class ExcelNativeExtractor(BaseExtractor):
                 "street_address_text",
                 "occupancy_type",
             }
-            has_enough_fields = len(row_dict) >= 2
+            # Count only schema fields (not raw header columns) for the threshold
+            schema_field_count = sum(1 for f in schema_fields if f in row_dict)
+            has_enough_fields = schema_field_count >= 2
             has_identity = bool(row_dict.keys() & _IDENTITY_FIELDS)
 
             # Drop repeated section headers where values mirror column titles.
@@ -318,10 +376,14 @@ class ExcelNativeExtractor(BaseExtractor):
                     row_dict["location_name"] = synthesized
                     has_identity = True
 
+            if not _passes_sov_row_gate(row_dict, mapped_schema_fields):
+                continue
+
             if has_enough_fields and has_identity:
-                # Fill missing fields with empty string for consistent columns.
-                full_row = {f: row_dict.get(f, "") for f in schema_fields}
-                results.append(full_row)
+                # Include raw-header keys for unmatched columns alongside schema
+                # field keys. apply_to_row in the pipeline will apply column_alias
+                # rules and then filter down to schema fields.
+                results.append(row_dict)
 
         return results
 
@@ -394,6 +456,46 @@ def _clean_value(value: object) -> str:
     return text
 
 
+def _is_positive_number(value: str) -> bool:
+    """Return True if value is parseable and > 0."""
+    if not value:
+        return False
+    cleaned = value.replace(",", "").replace("$", "").strip()
+    try:
+        return float(cleaned) > 0
+    except ValueError:
+        return False
+
+
+def _passes_sov_row_gate(row_dict: dict[str, str], mapped_fields: set[str]) -> bool:
+    """
+    Stricter filter for SOV-like layouts to drop subtotal/summary rows.
+    Applies only when core SOV fields are present in the mapped header.
+    """
+    required = {"total_insured_value", "street_address_text", "city", "state"}
+    if not required.issubset(mapped_fields):
+        return True
+
+    tiv = row_dict.get("total_insured_value", "")
+    street = row_dict.get("street_address_text", "").strip()
+    city = row_dict.get("city", "").strip()
+    state = row_dict.get("state", "").strip()
+    location_name = row_dict.get("location_name", "").strip().lower()
+
+    if not _is_positive_number(str(tiv)):
+        return False
+    if not street or street == "*":
+        return False
+    if not city or city == "*":
+        return False
+    if len(state) != 2 or not state.isalpha():
+        return False
+    if location_name.startswith("total "):
+        return False
+
+    return True
+
+
 def _is_header_like_row(
     row_dict: dict[str, str], field_header_tokens: dict[str, set[str]]
 ) -> bool:
@@ -451,3 +553,4 @@ def _synthesize_location_name(row_dict: dict[str, str]) -> str:
         return f"{base} ({occupancy})"
 
     return base
+

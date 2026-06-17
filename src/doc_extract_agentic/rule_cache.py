@@ -76,8 +76,9 @@ class RuleCache:
 
     def load_rules(self, schema_fields: list[str]) -> dict[str, Any]:
         """
-        Load all learned rules for a schema from cache.
-        Returns deduplicated rules suitable as bootstrap.
+        Load learned rules for a schema from cache.
+        Aggregates across history so knowledge from multiple documents can bootstrap
+        future runs instead of only replaying the latest run.
         """
         cache_path = self._get_schema_cache_path(schema_fields)
 
@@ -89,10 +90,28 @@ class RuleCache:
 
         try:
             cached_data = json.loads(cache_path.read_text(encoding="utf-8"))
-            rules = cached_data.get("latest", {}).get("rules", [])
+            latest_rules = cached_data.get("latest", {}).get("rules", [])
+            historical_rules: list[dict[str, Any]] = []
+            for entry in cached_data.get("history", []):
+                if not isinstance(entry, dict):
+                    continue
+                entry_rules = entry.get("rules", [])
+                if isinstance(entry_rules, list):
+                    historical_rules.extend(
+                        rule for rule in entry_rules if isinstance(rule, dict)
+                    )
+
+            merged = historical_rules + [
+                rule for rule in latest_rules if isinstance(rule, dict)
+            ]
+            rules = self.deduplicate_rules(merged)
             logger.info(
-                f"Loaded {len(rules)} cached rules for schema "
-                f"{self._schema_fingerprint(schema_fields)}"
+                "Loaded %d cached rules for schema %s "
+                "(%d latest + %d historical, deduped)",
+                len(rules),
+                self._schema_fingerprint(schema_fields),
+                len(latest_rules),
+                len(historical_rules),
             )
             return {"rules": rules}
         except (json.JSONDecodeError, OSError):

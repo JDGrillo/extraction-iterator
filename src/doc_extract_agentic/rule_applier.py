@@ -111,6 +111,10 @@ class RuleApplier:
             old = config.get("old", "")
             new = config.get("new", "")
             transformed[field_name] = value.replace(old, new)
+        elif transform_type == "default_if_empty":
+            default_value = str(config.get("value", "")).strip()
+            if not value.strip() and default_value:
+                transformed[field_name] = default_value
         elif transform_type == "split_first":
             # Split by delimiter and take first part
             delimiter = config.get("delimiter", " ")

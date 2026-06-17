@@ -24,6 +24,7 @@ class NormalizedTable:
 def normalize_excel_table(
     file_path: Path,
     sheet_name: str | None = None,
+    schema_fields: list[str] | None = None,
     skip_empty_rows: bool = True,
     detect_header_threshold: float = 0.7,
 ) -> NormalizedTable | None:
@@ -34,14 +35,19 @@ def normalize_excel_table(
     try:
         sheets = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
         if isinstance(sheets, dict):
-            # Multiple sheets; use first non-empty
+            # Multiple sheets: pick the best candidate by schema/header overlap.
+            best: tuple[float, str, pd.DataFrame] | None = None
             for sn, df in sheets.items():
-                if not df.empty:
-                    sheet_name = sn
-                    data_df = df
-                    break
-            else:
+                if df.empty:
+                    continue
+                score = _score_sheet_for_schema(df, schema_fields)
+                if best is None or score > best[0]:
+                    best = (score, sn, df)
+
+            if best is None:
                 return None
+            sheet_name = best[1]
+            data_df = best[2]
         else:
             # Single sheet
             sheet_name = sheet_name or "Sheet1"
@@ -82,6 +88,26 @@ def normalize_excel_table(
             best_header_score = score
             header_idx = idx
 
+    # If schema fields are known, prefer header rows with higher name overlap.
+    if schema_fields:
+        schema_terms = {_norm_col_name(s) for s in schema_fields if str(s).strip()}
+        best_schema_score = -1
+        best_schema_idx = header_idx
+        for idx, row in data_df.iterrows():
+            cells = [
+                _norm_col_name(v)
+                for v in row
+                if pd.notna(v) and str(v).strip()
+            ]
+            if len(cells) < 2:
+                continue
+            overlap = sum(1 for c in cells if c in schema_terms)
+            if overlap > best_schema_score:
+                best_schema_score = overlap
+                best_schema_idx = idx
+        if best_schema_score > 0:
+            header_idx = best_schema_idx
+
     # Generate column names
     if header_idx is not None:
         col_names = [
@@ -117,6 +143,35 @@ def normalize_excel_table(
         col_names=col_names,
         header_row_idx=header_idx,
     )
+
+
+def _norm_col_name(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value).strip().lower())
+
+
+def _score_sheet_for_schema(df: pd.DataFrame, schema_fields: list[str] | None) -> float:
+    """Score a sheet by density and schema/header overlap."""
+    if df.empty:
+        return -1.0
+
+    non_empty_rows = int(df.notna().any(axis=1).sum())
+    non_empty_cols = int(df.notna().any(axis=0).sum())
+    density_score = float(non_empty_rows * max(non_empty_cols, 1))
+
+    if not schema_fields:
+        return density_score
+
+    schema_terms = {_norm_col_name(s) for s in schema_fields if str(s).strip()}
+    overlap = 0
+    # Check first few rows where headers usually live.
+    for _, row in df.head(20).iterrows():
+        for cell in row:
+            if pd.isna(cell) or not str(cell).strip():
+                continue
+            if _norm_col_name(cell) in schema_terms:
+                overlap += 1
+
+    return density_score + overlap * 1000.0
 
 
 def normalize_golden_data(golden_path: Path) -> dict[str, dict[str, str]]:

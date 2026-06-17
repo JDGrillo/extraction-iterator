@@ -39,34 +39,47 @@ def align_rows(
     Uses value-based similarity matching (robust to field name mismatches).
     Returns alignments with detailed field-level mismatches.
     """
-    alignments = []
+    if not extracted_rows or not golden_data:
+        return []
 
+    golden_items = list(golden_data.items())
+    scored_pairs: list[tuple[float, int, int, str, list[FieldDiscrepancy]]] = []
+
+    # Build all extracted<->golden pair scores.
     for extracted_idx, extracted_row in enumerate(extracted_rows):
-        best_match_key = None
-        best_match_idx = None
-        best_score = 0.0
-        best_discrepancies = []
-
-        # Try to match this row to a golden row based on content similarity
-        for golden_key, golden_row in golden_data.items():
+        for golden_idx, (golden_key, golden_row) in enumerate(golden_items):
             score, discrepancies = _compare_rows_by_content(
-                extracted_row, golden_row, field_names
+                extracted_row,
+                golden_row,
+                field_names,
             )
-            if score > best_score:
-                best_score = score
-                best_match_key = golden_key
-                best_match_idx = extracted_idx
-                best_discrepancies = discrepancies
+            scored_pairs.append(
+                (score, extracted_idx, golden_idx, golden_key, discrepancies)
+            )
 
+    # Greedily pick highest-scoring one-to-one matches.
+    scored_pairs.sort(key=lambda x: x[0], reverse=True)
+    used_extracted: set[int] = set()
+    used_golden: set[int] = set()
+    max_pairs = min(len(extracted_rows), len(golden_items))
+
+    alignments: list[RowAlignment] = []
+    for score, extracted_idx, golden_idx, golden_key, discrepancies in scored_pairs:
+        if extracted_idx in used_extracted or golden_idx in used_golden:
+            continue
+        used_extracted.add(extracted_idx)
+        used_golden.add(golden_idx)
         alignments.append(
             RowAlignment(
                 extracted_row_idx=extracted_idx,
-                golden_row_key=best_match_key,
-                golden_row_idx=best_match_idx,
-                similarity_score=best_score,
-                discrepancies=best_discrepancies,
+                golden_row_key=golden_key,
+                golden_row_idx=golden_idx,
+                similarity_score=score,
+                discrepancies=discrepancies,
             )
         )
+        if len(alignments) >= max_pairs:
+            break
 
     return alignments
 

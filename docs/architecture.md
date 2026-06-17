@@ -13,67 +13,72 @@
 1. `doc-extract-run`: batch extraction from an input directory into normalized output artifacts.
 2. `doc-extract-learn`: iterative rule learning from one input file and one golden file, with persistent rule caching.
 
-`doc-extract-auto-iterate` remains available as an optional advanced/legacy workflow and is not required for the primary run/learn path.
-
-## doc-extract-run Flow
+## doc-extract-run Flow (Mermaid, SLM Handoff Focus)
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    participant U as User/Caller
-    participant C as CLI (doc-extract-run)
-    participant P as Pipeline
-    participant L as Planner
-    participant X as Extractors
-    participant R as Reconciler
-    participant A as Auditor
-    participant M as Learner
+flowchart TD
+    A[User runs doc-extract-run] --> B[Load config and schema]
+    B --> C[Planner builds per-file extraction plan]
 
-    U->>C: Submit input folder + schema + config
-    C->>P: Start run
-    P->>L: Build extraction plan per file
-    L->>X: Execute selected extractors
-    X-->>P: Candidate values + confidence + evidence
-    P->>R: Map candidates to target schema
-    R-->>P: Final schema row + field statuses
-    P->>A: Validate and compare against ground truth
-    A-->>P: Audit summary + discrepancies
-    P->>M: Persist run trajectory
-    M-->>P: Learning artifacts updated
-    P-->>U: extracted_output.xlsx + trace/audit files
+    C --> D1[excel_native deterministic extraction]
+    C --> D2[llm_native SLM extraction]
+    C --> D3[pdf_native optional deterministic parse]
+
+    D1 --> E[Candidate pool with evidence and confidence]
+    D2 --> E
+    D3 --> E
+
+    E --> F{SLM handoff check}
+    F -->|High overlap, low conflict| G[Allow targeted SLM fills for missing fields]
+    F -->|Low overlap or generic-value drift| H[Constrain to deterministic winners]
+
+    G --> I[Reconcile to strict target schema]
+    H --> I
+
+    I --> J[Audit and validation summary]
+    J --> K[Persist run_trace and learning_events]
+    K --> L[Append handoff event history]
+    L --> M[Emit extracted output artifacts]
 ```
 
-## doc-extract-learn Flow
+Run-path rationale:
+- Deterministic extraction anchors row identity and stable field coverage.
+- SLM candidates are only promoted when overlap/conflict checks indicate net quality lift.
+- Handoff events are persisted so recurring conflict fields feed later learning.
+
+## doc-extract-learn Flow (Mermaid, Proposer/Critic Handoff Focus)
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    participant U as User/Caller
-    participant C as CLI (doc-extract-learn)
-    participant AL as AutonomousLearner
-    participant N as TableNormalizer
-    participant CA as ColumnMapper
-    participant RA as RowAligner
-    participant ML as MappingLearner
-    participant AP as RuleApplier
-    participant RC as RuleCache
+flowchart TD
+    A[User runs doc-extract-learn] --> B[Load schema, config, golden file]
+    B --> C[Bootstrap rules from schema-keyed cache history]
 
-    U->>C: Submit input file + golden file + schema + config
-    C->>AL: run_learning_loop(...)
-    AL->>RC: Load cached rules (optional)
-    loop per iteration
-        AL->>N: Normalize input and golden tables
-        AL->>CA: Auto-map columns to schema fields
-        AL->>RA: Align extracted rows to golden rows
-        AL->>AP: Apply active rules and score row accuracy
-        AL->>ML: Learn new rules from discrepancies
-        ML-->>AL: Learned rules
-        AL->>AP: Reload rules for next iteration
-    end
-    AL->>RC: Persist learned rules
-    AL-->>C: History + best_accuracy + final_extracted_rows
-    C-->>U: learning_result.json + learned_rules.json + extracted_final.xlsx/csv
+    C --> D[Normalize input and golden tables]
+    D --> E[Auto-map columns and align rows]
+    E --> F[Apply active rules and score schema accuracy]
+
+    F --> G[Proposer SLM generates candidate transforms]
+    G --> H[Critic SLM adversarial review]
+    H --> I{Rule governance gate}
+
+    I -->|Accepted: impact and confidence pass| J[Promote rule set]
+    I -->|Rejected: no improvement or low confidence| K[Drop or quarantine rules]
+
+    J --> L[Tag provenance proposer or critic]
+    K --> M[Record rejection reason]
+    L --> N[Persist learned rules and iteration history]
+    M --> N
+
+    N --> O[Append learning handoff event history]
+    O --> P{Stop criteria met?}
+    P -->|No| D
+    P -->|Yes| Q[Emit learning_result and extracted_final artifacts]
 ```
+
+Learn-path rationale:
+- Proposer explores broader transformations; critic compresses to precise, high-confidence rules.
+- Acceptance is impact-based, not volume-based, preventing rule-count inflation.
+- Shared handoff history closes the loop so repeated run/learn conflicts become explicit prompts in later iterations.
 
 ## Output Artifacts
 
