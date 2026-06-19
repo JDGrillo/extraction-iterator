@@ -58,6 +58,31 @@ doc-extract-learn `
   --max-iterations 6
 ```
 
+Run batch learning across `source` + `target` directories (sequential):
+
+```powershell
+doc-extract-learn learn-batch `
+  --source-dir .\source `
+  --target-dir .\target `
+  --schema .\schemas\extract-sov.schema.json `
+  --config .\configs\default.yaml `
+  --output-dir .\output\learn_batch `
+  --max-iterations 6
+```
+
+For similarly named files/directories, tune matching behavior:
+
+```powershell
+doc-extract-learn learn-batch `
+  --source-dir .\source `
+  --target-dir .\target `
+  --min-match-score 180 `
+  --allow-source-reuse
+```
+
+- `--min-match-score`: raises the confidence threshold before a source/target pair is accepted.
+- `--allow-source-reuse`: allows one source file to be paired with multiple targets.
+
 ## Commands
 
 - `doc-extract-run`
@@ -68,6 +93,7 @@ doc-extract-learn `
   - Input: one source Excel file + one golden Excel file
   - Output: `learning_result.json`, `learned_rules.json`, extracted final xlsx/csv
   - Supports rule caching (`.cache/rules`) to improve future runs with the same schema.
+  - Includes `learn-batch` subcommand for sequential training over `source`/`target` folders.
 
 ## Example Store
 
